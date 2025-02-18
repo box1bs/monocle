@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/xml"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -38,59 +38,87 @@ type SearchIndex struct {
 	mu			*sync.RWMutex
 	stemmer 	stemmer.Stemmer
 	stopWords 	*stemmer.StopWords
-	logger 		*logger
+	logger 		*AsyncLogger
 }
 
 type webSpider struct {
 	baseURL 		string
 	client  		*http.Client
-	visited 		map[string]struct{}
+	visited 		*sync.Map
 	mu				*sync.RWMutex
-	wg				*sync.WaitGroup
 	maxD			int
 	maxLinksInPage 	int
-	//workerPool		chan struct{}
+	pool 			*WorkerPool
 }
 
-type logger struct {
+type AsyncLogger struct {
 	file *os.File
+	ch   chan string
+	wg   sync.WaitGroup
 }
 
-func NewLogger(fileName string) (*logger, error) {
+func NewAsyncLogger(fileName string) (*AsyncLogger, error) {
 	file, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		return nil, err
 	}
-	return &logger{
+	al := &AsyncLogger{
 		file: file,
-	}, nil
+		ch:   make(chan string, 1000),
+	}
+	al.wg.Add(1)
+	go func() {
+		defer al.wg.Done()
+		writer := bufio.NewWriter(al.file)
+		for msg := range al.ch {
+			_, err := writer.WriteString(msg + "\n")
+			if err != nil {
+				// Можно добавить обработку ошибки записи
+			}
+			writer.Flush()
+		}
+	}()
+	return al, nil
 }
 
-const sitemap = "sitemap.xml"
-
-func NewSpider(baseURL string, maxDepth int) *webSpider {
-	return &webSpider{
-		baseURL: baseURL,
-		client: &http.Client{
-            Timeout: 10 * time.Second,
-            Transport: &http.Transport{
-                MaxIdleConns:        100,
-                MaxIdleConnsPerHost: 10,
-                IdleConnTimeout:     90 * time.Second,
-                DisableKeepAlives:   false,
-                ForceAttemptHTTP2:   true,
-            },
-        },
-		visited: make(map[string]struct{}),
-		mu: new(sync.RWMutex),
-		wg: new(sync.WaitGroup),
-		maxD: maxDepth,
-		maxLinksInPage: 10,
-		//workerPool: make(chan struct{}, 1000),
+func (l *AsyncLogger) Write(data string) {
+	select {
+	case l.ch <- data:
+	default:
+		l.ch <- data
 	}
 }
 
-func NewSearchIndex(Stemmer stemmer.Stemmer, l *logger) *SearchIndex {
+func (l *AsyncLogger) Close() error {
+	close(l.ch)
+	l.wg.Wait()
+	return l.file.Close()
+}
+
+const sitemap = "sitemap.xml"
+var urlRegex = regexp.MustCompile(`^https?://`)
+
+func NewSpider(baseURL string, maxDepth, poolSize int) *webSpider {
+	return &webSpider{
+		baseURL: baseURL,
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				IdleConnTimeout:   90 * time.Second,
+				DisableKeepAlives: false,
+				ForceAttemptHTTP2: true,
+			},
+		},
+		visited:        new(sync.Map),
+		mu:             new(sync.RWMutex),
+		maxD:           maxDepth,
+		maxLinksInPage: 10,
+		pool: NewWorkerPool(poolSize, 60000),
+	}
+}
+
+
+func NewSearchIndex(Stemmer stemmer.Stemmer, l *AsyncLogger) *SearchIndex {
 	return &SearchIndex{
 		index: make(map[string]map[uuid.UUID]int),
 		docs: make(map[uuid.UUID]*Document),
@@ -102,7 +130,7 @@ func NewSearchIndex(Stemmer stemmer.Stemmer, l *logger) *SearchIndex {
 }
 
 func main() {
-	logger, err := NewLogger("crawled.txt")
+	logger, err := NewAsyncLogger("crawled.txt")
 	if err != nil {
 		panic(err)
 	}
@@ -131,18 +159,20 @@ func Present(docs []*Document) {
 func (idx *SearchIndex) Start(baseURLs []string, depth int) error {
 	var wg sync.WaitGroup
 	for _, url := range baseURLs {
-		spider := NewSpider(url, depth)
+		spider := NewSpider(url, depth, 150)
 		wg.Add(1)
-		//spider.workerPool <- struct{}{}
+
 		go func (u string, w *webSpider)  {
 			defer func() {
-				//<- w.workerPool
-				wg.Done()
-			}()
-			w.wg.Add(1)
-			//w.workerPool <- struct{}{}
-			go w.Crawl(u, idx, 0)
-			w.wg.Wait()
+                w.pool.Stop()
+                wg.Done()
+            }()
+
+			w.pool.Submit(func() {
+				w.Crawl(u, idx, 0)
+			})
+
+			w.pool.Wait()
 		}(url, spider)
 	}
 	wg.Wait()
@@ -151,65 +181,61 @@ func (idx *SearchIndex) Start(baseURLs []string, depth int) error {
 }
 
 func (ws *webSpider) Crawl(currentURL string, idx *SearchIndex, depth int) {
-	defer func() {
-		//<- ws.workerPool
-		ws.wg.Done()
-	}()
-	if depth >= ws.maxD {
-		return
-	}
+    if depth >= ws.maxD {
+        return
+    }
 
-	normalized, err := NormalizeUrl(currentURL)
-	if err != nil {
+    normalized, err := NormalizeUrl(currentURL)
+    if err != nil {
         log.Printf("Error normalizing URL %s: %v\n", currentURL, err)
         return
     }
-	
-	if ws.isVisited(normalized) {
-		return
-	}
-	ws.markAsVisited(normalized)
+    
+    if ws.isVisited(normalized) {
+        return
+    }
 
-	log.Println("Parsing: " + currentURL)
-	
-	if urls, err := ws.haveSitemap(currentURL); urls != nil && err == nil {
-		for _, link := range urls {
-			ws.wg.Add(1)
-			//ws.workerPool <- struct{}{}
-			go ws.Crawl(link, idx, depth + 1)
-		}
-		return
-	}
+    ws.markAsVisited(normalized)
+    
+    log.Println("Parsing: " + currentURL)
 
-	if err := idx.logger.write(currentURL); err != nil {
-		log.Fatal(err)
-	}
+    if urls, err := ws.haveSitemap(currentURL); urls != nil && err == nil {
+        for _, link := range urls {
+            if normalized, err := NormalizeUrl(link); err == nil && !ws.isVisited(normalized) {
+                ws.pool.Submit(func() {
+                    ws.Crawl(link, idx, depth+1)
+                })
+            }
+        }
+        return
+    }
+    
+    idx.logger.Write(currentURL)
+    
+    doc, err := ws.getHTML(currentURL)
+    if err != nil || doc == "" {
+        log.Printf("error parsing page: %s\n", currentURL)
+        return
+    }
+    
+    description, content := parseHTMLStream(doc)
 
-	doc, err := ws.getHTML(currentURL)
-	if err != nil || doc == "" {
-		log.Printf("error parsing page: %s\n", currentURL)
-		return
-	}
-
-	node, err := html.Parse(strings.NewReader(doc))
-	if err != nil {
-		return
-	}
-
-	var document Document
-	document.Id = uuid.New()
-	document.URL = currentURL
-	document.Description = getPageDescription(node)
-	words := idx.tokenizeAndStem(extractText(node))
-		
-	idx.addDocument(&document, words)
-
-	links := ws.extractLinks(node)
-	for _, link := range links {
-		ws.wg.Add(1)
-		//ws.workerPool <- struct{}{}
-		go ws.Crawl(link, idx, depth + 1)
-	}
+    document := &Document{
+        Id: uuid.New(),
+        URL: currentURL,
+        Description: description,
+    }
+    words := idx.tokenizeAndStem(content)
+    idx.addDocument(document, words)
+        
+    links := extractLinksStream(doc, currentURL, ws.maxLinksInPage)
+    for _, link := range links {
+        if normalized, err := NormalizeUrl(link); err == nil && !ws.isVisited(normalized) {
+            ws.pool.Submit(func() {
+                ws.Crawl(link, idx, depth+1)
+            })
+        }
+    }
 }
 
 func (idx *SearchIndex) Search(query string) []*Document {
@@ -241,13 +267,88 @@ func (idx *SearchIndex) Search(query string) []*Document {
 	return result
 }
 
-func (l *logger) write(data string) error {
-	writer := bufio.NewWriter(l.file)
-	_, err := writer.WriteString(data + "\n")
-	if err != nil {
-		return err
+func parseHTMLStream(htmlContent string) (description string, fullText string) {
+	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
+	var metaDesc, ogDesc, firstParagraph string
+	var inParagraph, inScriptOrStyle bool
+	var fullTextBuilder strings.Builder
+
+	for {
+		tokenType := tokenizer.Next()
+		if tokenType == html.ErrorToken {
+			if tokenizer.Err() == io.EOF {
+				break
+			}
+			// При возникновении ошибки можно выйти или обработать её отдельно
+			break
+		}
+
+		switch tokenType {
+		case html.StartTagToken:
+			t := tokenizer.Token()
+			tagName := strings.ToLower(t.Data)
+			if tagName == "meta" {
+				var isDesc, isOG bool
+				var content string
+				for _, attr := range t.Attr {
+					key := strings.ToLower(attr.Key)
+					val := attr.Val
+					if key == "name" && strings.ToLower(val) == "description" {
+						isDesc = true
+					}
+					if key == "property" && strings.ToLower(val) == "og:description" {
+						isOG = true
+					}
+					if key == "content" {
+						content = attr.Val
+					}
+				}
+				if isDesc && content != "" && metaDesc == "" {
+					metaDesc = content
+				}
+				if isOG && content != "" && ogDesc == "" {
+					ogDesc = content
+				}
+			} else if tagName == "p" {
+				// Начинаем собирать первый абзац, если он ещё не найден
+				if firstParagraph == "" {
+					inParagraph = true
+				}
+			} else if tagName == "script" || tagName == "style" {
+				inScriptOrStyle = true
+			}
+		case html.EndTagToken:
+			t := tokenizer.Token()
+			tagName := strings.ToLower(t.Data)
+			if tagName == "p" && inParagraph {
+				inParagraph = false
+			} else if tagName == "script" || tagName == "style" {
+				inScriptOrStyle = false
+			}
+		case html.TextToken:
+			if inScriptOrStyle {
+				continue
+			}
+			text := strings.TrimSpace(string(tokenizer.Text()))
+			if text != "" {
+				fullTextBuilder.WriteString(text + " ")
+				if inParagraph && firstParagraph == "" {
+					firstParagraph += text + " "
+				}
+			}
+		}
 	}
-	return writer.Flush()
+
+	fullText = strings.TrimSpace(fullTextBuilder.String())
+	// Приоритет описания: meta > og > первый абзац
+	if metaDesc != "" {
+		description = metaDesc
+	} else if ogDesc != "" {
+		description = ogDesc
+	} else {
+		description = strings.TrimSpace(firstParagraph)
+	}
+	return description, fullText
 }
 
 func (idx *SearchIndex) addDocument(doc *Document, words []string) {
@@ -295,16 +396,12 @@ func (ws *webSpider) ProcessSitemap(baseURL, sitemapURL string) ([]string, error
 }
 
 func (ws *webSpider) isVisited(URL string) bool {
-	ws.mu.RLock()
-	defer ws.mu.RUnlock()
-	_, ex := ws.visited[URL]
-	return ex
+    _, exists := ws.visited.Load(URL)
+    return exists
 }
 
 func (ws *webSpider) markAsVisited(URL string) {
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
-	ws.visited[URL] = struct{}{}
+    ws.visited.Store(URL, struct{}{})
 }
 
 func getLocalConfigUrls(path string) ([]string, error) {
@@ -354,165 +451,36 @@ func decodeSitemap(r io.Reader, limiter int) ([]string, error) {
 	return urls, nil
 }
 
-func getPageDescription(doc *html.Node) string {
-    if desc := extractMetaDescription(doc); desc != "" {
-        return desc
-    }
-    
-    if desc := extractOGDescription(doc); desc != "" {
-        return desc
-    }
-    
-    return extractFirstParagraph(doc)
-}
-
-func extractMetaDescription(doc *html.Node) string {
-	var description string
-	var findMeta func(*html.Node)
-
-	findMeta = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "meta" {
-			var isDescription, hasContent bool
-			var content string
-
-			for _, attr := range n.Attr {
-				if attr.Key == "name" && attr.Val == "description" {
-					isDescription = true
-				}
-				if attr.Key == "content" {
-					hasContent = true
-					content = attr.Val
-				}
+func extractLinksStream(htmlContent, baseURL string, maxLinks int) []string {
+	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
+	links := make([]string, 0, maxLinks)
+	for {
+		tokenType := tokenizer.Next()
+		if tokenType == html.ErrorToken {
+			if tokenizer.Err() == io.EOF {
+				break
 			}
-
-			if isDescription && hasContent {
-				description = content
-			}
+			break
 		}
-
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			findMeta(c)
-		}
-	}
-
-	findMeta(doc)
-	return description
-}
-
-func extractOGDescription(doc *html.Node) string {
-    var description string
-    var findOG func(*html.Node)
-    
-    findOG = func(n *html.Node) {
-        if n.Type == html.ElementNode && n.Data == "meta" {
-            var isOGDescription, hasContent bool
-            var content string
-            
-            for _, attr := range n.Attr {
-                if attr.Key == "property" && attr.Val == "og:description" {
-                    isOGDescription = true
-                }
-                if attr.Key == "content" {
-                    hasContent = true
-                    content = attr.Val
-                }
-            }
-            
-            if isOGDescription && hasContent {
-                description = content
-            }
-        }
-        
-        for c := n.FirstChild; c != nil; c = c.NextSibling {
-            findOG(c)
-        }
-    }
-    
-    findOG(doc)
-    return description
-}
-
-func extractFirstParagraph(doc *html.Node) string {
-    var paragraph string
-    var findParagraph func(*html.Node)
-    
-    findParagraph = func(n *html.Node) {
-        if n.Type == html.ElementNode && n.Data == "p" {
-            var text string
-            for c := n.FirstChild; c != nil; c = c.NextSibling {
-                if c.Type == html.TextNode {
-                    text += c.Data
-                }
-            }
-            
-            if paragraph == "" && strings.TrimSpace(text) != "" {
-                paragraph = text
-            }
-        }
-        
-        if paragraph == "" {
-            for c := n.FirstChild; c != nil; c = c.NextSibling {
-                findParagraph(c)
-            }
-        }
-    }
-    
-    findParagraph(doc)
-    return strings.TrimSpace(paragraph)
-}
-
-func (ws *webSpider) extractLinks(doc *html.Node) []string {
-	links := make([]string, 0)
-	var findLinks func(n *html.Node)
-
-	findLinks = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "a" {
-			for _, attr := range n.Attr {
-				if attr.Key == "href" {
-					url := makeAbsoluteURL(ws.baseURL, attr.Val)
-					if url == "" {
+		if tokenType == html.StartTagToken {
+			t := tokenizer.Token()
+			if strings.ToLower(t.Data) == "a" {
+				for _, attr := range t.Attr {
+					if strings.ToLower(attr.Key) == "href" {
+						link := makeAbsoluteURL(baseURL, attr.Val)
+						if link != "" {
+							links = append(links, link)
+							if len(links) >= maxLinks {
+								return links
+							}
+						}
 						break
 					}
-					links = append(links, url)
-					if len(links) >= ws.maxLinksInPage {
-						return
-					}
-					break
 				}
 			}
 		}
-
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			findLinks(c)
-		}
 	}
-
-	findLinks(doc)
 	return links
-}
-
-func extractText(n *html.Node) string {
-    var buf bytes.Buffer
-    
-    var extract func(*html.Node)
-    extract = func(n *html.Node) {
-        if n.Type == html.ElementNode {
-            if n.Data == "script" || n.Data == "style" {
-                return
-            }
-        }
-        
-        if n.Type == html.TextNode {
-            buf.WriteString(n.Data + " ")
-        }
-        
-        for c := n.FirstChild; c != nil; c = c.NextSibling {
-            extract(c)
-        }
-    }
-    
-    extract(n)
-    return buf.String()
 }
 
 func (idx *SearchIndex) tokenizeAndStem(text string) []string {
@@ -558,10 +526,6 @@ func makeAbsoluteURL(baseURL, href string) string {
 }
 
 func NormalizeUrl(rawUrl string) (string, error) {
-    // Pre-compile URL parsing regex
-    var urlRegex = regexp.MustCompile(`^https?://`)
-    
-    // Remove protocol if present
     uri := urlRegex.ReplaceAllString(rawUrl, "")
     
     // Parse remaining URL
@@ -570,7 +534,6 @@ func NormalizeUrl(rawUrl string) (string, error) {
         return "", err
     }
     
-    // Use strings.Builder for efficient string manipulation
     var normalized strings.Builder
     normalized.Grow(len(parsedUrl.Host) + len(parsedUrl.Path))
     normalized.WriteString(strings.ToLower(parsedUrl.Host))
@@ -611,4 +574,71 @@ func (ws *webSpider) getHTML(URL string) (string, error) {
     }
 
     return builder.String(), nil
+}
+
+type WorkerPool struct {
+	tasks     chan func()      // Канал, из которого воркеры берут задачи
+	taskQueue chan func()      // Очередь для поступающих задач
+	wg        *sync.WaitGroup
+	quit      chan struct{}
+	workers   int32
+}
+
+func NewWorkerPool(size int, queueCapacity int) *WorkerPool {
+	wp := &WorkerPool{
+		tasks:     make(chan func(), size*2),
+		taskQueue: make(chan func(), queueCapacity), // Например, 60000
+		wg:        &sync.WaitGroup{},
+		quit:      make(chan struct{}),
+	}
+	// Диспетчер: непрерывно передаёт задачи из очереди в канал tasks
+	go func() {
+		for {
+			select {
+			case task := <-wp.taskQueue:
+				wp.tasks <- task
+			case <-wp.quit:
+				return
+			}
+		}
+	}()
+	// Запускаем воркеров
+	for i := 0; i < size; i++ {
+		go wp.worker()
+	}
+	return wp
+}
+
+func (wp *WorkerPool) Submit(task func()) {
+	// Оборачиваем задачу, чтобы гарантировать вызов wg.Done() после выполнения
+	wp.wg.Add(1)
+	wp.taskQueue <- func() {
+		defer wp.wg.Done()
+		task()
+	}
+}
+
+func (wp *WorkerPool) worker() {
+	atomic.AddInt32(&wp.workers, 1)
+	defer atomic.AddInt32(&wp.workers, -1)
+	for {
+		select {
+		case task, ok := <-wp.tasks:
+			if !ok {
+				return
+			}
+			task()
+		case <-wp.quit:
+			return
+		}
+	}
+}
+
+func (wp *WorkerPool) Wait() {
+	wp.wg.Wait()
+}
+
+func (wp *WorkerPool) Stop() {
+	close(wp.quit)
+	wp.Wait()
 }
