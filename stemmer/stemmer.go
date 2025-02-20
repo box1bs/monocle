@@ -6,7 +6,7 @@ type Stemmer interface {
 	Stem(string) string
 }
 
-type EnglishStemmer struct {
+type englishStemmer struct {
 	step1aRules map[string]string
 	step1bRules map[string]string
 	step2Rules  map[string]string
@@ -44,8 +44,8 @@ func (sw *StopWords) IsStopWord(word string) bool {
     return exists
 }
 
-func NewEnglishStemmer() *EnglishStemmer {
-	return &EnglishStemmer{
+func NewEnglishStemmer() *englishStemmer {
+	return &englishStemmer{
 		step1aRules: map[string]string{
 			"sses": "ss", // possesses -> possess
 			"ies":  "i",  // ponies -> poni
@@ -112,11 +112,11 @@ func NewEnglishStemmer() *EnglishStemmer {
 	}
 }
 
-func (s *EnglishStemmer) hasSuffix(word, suffix string) bool {
+func (s *englishStemmer) hasSuffix(word, suffix string) bool {
 	return len(word) > len(suffix) && strings.HasSuffix(word, suffix)
 }
 
-func (s *EnglishStemmer) measure(word string) int {
+func (s *englishStemmer) measure(word string) int {
     isVowel := func(c byte) bool {
         return strings.ContainsRune("aeiou", rune(c))
     }
@@ -136,7 +136,7 @@ func (s *EnglishStemmer) measure(word string) int {
     return m
 }
 
-func (s *EnglishStemmer) Stem(word string) string {
+func (s *englishStemmer) Stem(word string) string {
     if len(word) <= 2 {
         return word
     }

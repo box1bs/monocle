@@ -173,7 +173,7 @@ func (ws *webSpider) getHTML(URL string) (string, error) {
 
     var builder strings.Builder
     scanner := bufio.NewScanner(resp.Body)
-    scanner.Buffer(make([]byte, 64*1024), 10*1024*1024) // увеличенный буфер
+    scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
 
     for scanner.Scan() {
         builder.WriteString(scanner.Text())

@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type SearchIndex struct {
+type searchIndex struct {
 	index     map[string]map[uuid.UUID]int
 	docs      map[uuid.UUID]*handle.Document
 	mu        *sync.RWMutex
@@ -24,8 +24,8 @@ type SearchIndex struct {
 	logger    *logger.AsyncLogger
 }
 
-func NewSearchIndex(Stemmer stemmer.Stemmer, l *logger.AsyncLogger) *SearchIndex {
-	return &SearchIndex{
+func NewSearchIndex(Stemmer stemmer.Stemmer, l *logger.AsyncLogger) *searchIndex {
+	return &searchIndex{
 		index: make(map[string]map[uuid.UUID]int),
 		docs: make(map[uuid.UUID]*handle.Document),
 		mu: new(sync.RWMutex),
@@ -35,7 +35,7 @@ func NewSearchIndex(Stemmer stemmer.Stemmer, l *logger.AsyncLogger) *SearchIndex
 	}
 }
 
-func (idx *SearchIndex) Start(baseURLs []string, depth int) error {
+func (idx *searchIndex) Start(baseURLs []string, depth int) error {
 	wp := workerPool.NewWorkerPool(1000, 50000)
     mp := new(sync.Map)
     for _, url := range baseURLs {
@@ -49,7 +49,7 @@ func (idx *SearchIndex) Start(baseURLs []string, depth int) error {
     return nil
 }
 
-func (idx *SearchIndex) Search(query string) []*handle.Document {
+func (idx *searchIndex) Search(query string) []*handle.Document {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
@@ -78,11 +78,11 @@ func (idx *SearchIndex) Search(query string) []*handle.Document {
 	return result
 }
 
-func (idx *SearchIndex) Write(data string) {
+func (idx *searchIndex) Write(data string) {
 	idx.logger.Write(data)
 }
 
-func (idx *SearchIndex) AddDocument(doc *handle.Document, words []string) {
+func (idx *searchIndex) AddDocument(doc *handle.Document, words []string) {
     idx.mu.Lock()
     defer idx.mu.Unlock()
 	
@@ -96,7 +96,7 @@ func (idx *SearchIndex) AddDocument(doc *handle.Document, words []string) {
     }
 }
 
-func (idx *SearchIndex) TokenizeAndStem(text string) []string {
+func (idx *searchIndex) TokenizeAndStem(text string) []string {
     text = strings.ToLower(text)
     
     var tokens []string
