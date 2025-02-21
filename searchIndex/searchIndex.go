@@ -35,11 +35,11 @@ func NewSearchIndex(Stemmer stemmer.Stemmer, l *logger.AsyncLogger) *searchIndex
 	}
 }
 
-func (idx *searchIndex) Start(baseURLs []string, depth int) error {
+func (idx *searchIndex) Start(config *handle.ConfigData) error {
 	wp := workerPool.NewWorkerPool(1000, 50000)
     mp := new(sync.Map)
-    for _, url := range baseURLs {
-        spider := webSpider.NewSpider(url, depth, mp, wp)
+    for _, url := range config.BaseURLs {
+        spider := webSpider.NewSpider(url, config.MaxDepth, config.MaxLinksInPage, mp, wp, config.OnlySameDomain)
         spider.Pool.Submit(func() {
             spider.Crawl(url, idx, 0)
         })

@@ -1,6 +1,7 @@
 package handleTools
 
 import (
+	"encoding/json"
 	"encoding/xml"
 	"io"
 	"net/http"
@@ -9,8 +10,8 @@ import (
 	"regexp"
 	"strings"
 
-	"golang.org/x/net/html"
 	"github.com/google/uuid"
+	"golang.org/x/net/html"
 )
 
 var urlRegex = regexp.MustCompile(`^https?://`)
@@ -22,7 +23,7 @@ type Document struct {
 	Score		float32
 }
 
-func ParseHTMLStream(htmlContent, baseURL string, maxLinks int) (description, fullText string, links []string) {
+func ParseHTMLStream(htmlContent, baseURL string, maxLinks int, onlySameOrigin bool) (description, fullText string, links []string) {
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
 	var metaDesc, ogDesc, firstParagraph string
 	var inParagraph, inScriptOrStyle bool
@@ -75,6 +76,16 @@ func ParseHTMLStream(htmlContent, baseURL string, maxLinks int) (description, fu
 					if strings.ToLower(attr.Key) == "href" {
 						link := MakeAbsoluteURL(baseURL, attr.Val)
 						if link != "" && len(links) < maxLinks {
+							if onlySameOrigin {
+								same, err := isSameOrigin(link, baseURL)
+								if err != nil {
+									break
+								}
+								if same {
+									links = append(links, link)
+								}
+								break
+							}
 							links = append(links, link)
 						}
 						break
@@ -145,15 +156,6 @@ func NormalizeUrl(rawUrl string) (string, error) {
     return strings.TrimSuffix(result, "/"), nil
 }
 
-func GetLocalConfigUrls(path string) ([]string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	return decodeSitemap(file, 20)
-}
-
 func GetSitemapURLs(URL string, cli *http.Client, limiter int) ([]string, error) {
 	resp, err := cli.Get(URL)
 	if err != nil {
@@ -190,4 +192,38 @@ func decodeSitemap(r io.Reader, limiter int) ([]string, error) {
 	}
 
 	return urls, nil
+}
+
+func isSameOrigin(rawURL, baseURL string) (bool, error) {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return false, err
+	}
+
+	parsedBaseURL, _ := url.Parse(baseURL)
+	if !strings.Contains(parsedBaseURL.Hostname(), parsedURL.Hostname()) {
+		return false, nil
+	}
+	return true, nil
+}
+
+type ConfigData struct {
+	BaseURLs 		[]string	`json:"base_urls"`
+	OnlySameDomain 	bool		`json:"only_same_domain"`
+	MaxLinksInPage 	int			`json:"max_links_in_page"`
+	MaxDepth 		int			`json:"max_depth_crawl"`
+}
+
+func UploadLocalConfiguration(fileName string) (*ConfigData, error) {
+	file, err := os.Open(fileName)
+	if err != nil {
+		return nil, err
+	}
+
+	var cfg ConfigData
+	if err := json.NewDecoder(file).Decode(&cfg); err != nil {
+		return nil, err
+	}
+
+	return &cfg, err
 }

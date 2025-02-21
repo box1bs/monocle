@@ -15,12 +15,12 @@ func main() {
 	}
 	defer logger.File.Close()
 
-	urls, err := handleTools.GetLocalConfigUrls("sitemap.xml")
+	cfg, err := handleTools.UploadLocalConfiguration("search_config.json")
 	if err != nil {
 		panic(err)
 	}
 	i := searchIndex.NewSearchIndex(stemmer.NewEnglishStemmer(), logger)
-	i.Start(urls, 5)
+	i.Start(cfg)
 
 	var query string
 	for {

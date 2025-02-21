@@ -31,11 +31,12 @@ type webSpider struct {
 	maxD           int
 	maxLinksInPage int
 	Pool           *workerPool.WorkerPool
+    onlySameDomain bool
 }
 
 const sitemap = "sitemap.xml"
 
-func NewSpider(baseURL string, maxDepth int, mp *sync.Map, wp *workerPool.WorkerPool) *webSpider {
+func NewSpider(baseURL string, maxDepth, maxLinksInPage int, mp *sync.Map, wp *workerPool.WorkerPool, onlySameDomain bool) *webSpider {
 	return &webSpider{
 		baseURL: baseURL,
 		client: &http.Client{
@@ -49,8 +50,9 @@ func NewSpider(baseURL string, maxDepth int, mp *sync.Map, wp *workerPool.Worker
 		visited:        mp,
 		mu:             new(sync.RWMutex),
 		maxD:           maxDepth,
-		maxLinksInPage: 100,
+		maxLinksInPage: maxLinksInPage,
 		Pool:           wp,
+        onlySameDomain: onlySameDomain,
 	}
 }
 
@@ -79,7 +81,6 @@ func (ws *webSpider) Crawl(currentURL string, idx Indexer, depth int) {
                 })
             }
         }
-        return
     }
     
     doc, err := ws.getHTML(currentURL)
@@ -90,7 +91,7 @@ func (ws *webSpider) Crawl(currentURL string, idx Indexer, depth int) {
     
 	idx.Write(currentURL)
 
-    description, content, links := handle.ParseHTMLStream(doc, currentURL, ws.maxLinksInPage)
+    description, content, links := handle.ParseHTMLStream(doc, currentURL, ws.maxLinksInPage, ws.onlySameDomain)
 
     document := &handle.Document{
         Id: uuid.New(),
