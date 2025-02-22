@@ -38,13 +38,18 @@ func NewSearchIndex(Stemmer stemmer.Stemmer, l *logger.AsyncLogger) *searchIndex
 func (idx *searchIndex) Start(config *handle.ConfigData) error {
 	wp := workerPool.NewWorkerPool(1000, 50000)
     mp := new(sync.Map)
+	var rl *webSpider.RateLimiter
+	if config.Rate > 0 {
+		rl = webSpider.NewRateLimiter(config.Rate)
+		defer rl.Stop()
+	}
     for _, url := range config.BaseURLs {
-        spider := webSpider.NewSpider(url, config.MaxDepth, config.MaxLinksInPage, mp, wp, config.OnlySameDomain)
+        spider := webSpider.NewSpider(url, config.MaxDepth, config.MaxLinksInPage, mp, wp, config.OnlySameDomain, rl)
         spider.Pool.Submit(func() {
             spider.Crawl(url, idx, 0)
         })
     }
-    wp.Wait()
+	wp.Wait()
     wp.Stop()
     return nil
 }

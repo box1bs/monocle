@@ -32,11 +32,12 @@ type webSpider struct {
 	maxLinksInPage int
 	Pool           *workerPool.WorkerPool
     onlySameDomain bool
+    rateLimiter    *RateLimiter
 }
 
 const sitemap = "sitemap.xml"
 
-func NewSpider(baseURL string, maxDepth, maxLinksInPage int, mp *sync.Map, wp *workerPool.WorkerPool, onlySameDomain bool) *webSpider {
+func NewSpider(baseURL string, maxDepth, maxLinksInPage int, mp *sync.Map, wp *workerPool.WorkerPool, onlySameDomain bool, rateLimiter *RateLimiter) *webSpider {
 	return &webSpider{
 		baseURL: baseURL,
 		client: &http.Client{
@@ -53,6 +54,7 @@ func NewSpider(baseURL string, maxDepth, maxLinksInPage int, mp *sync.Map, wp *w
 		maxLinksInPage: maxLinksInPage,
 		Pool:           wp,
         onlySameDomain: onlySameDomain,
+        rateLimiter: rateLimiter,
 	}
 }
 
@@ -60,7 +62,7 @@ func (ws *webSpider) Crawl(currentURL string, idx Indexer, depth int) {
     if depth >= ws.maxD {
         return
     }
-
+    
     normalized, err := handle.NormalizeUrl(currentURL)
     if err != nil {
         log.Printf("Error normalizing URL %s: %v\n", currentURL, err)
@@ -72,7 +74,7 @@ func (ws *webSpider) Crawl(currentURL string, idx Indexer, depth int) {
     }
     
     log.Println("Parsing: " + currentURL)
-
+    
     if urls, err := ws.haveSitemap(currentURL); urls != nil && err == nil {
         for _, link := range urls {
             if normalized, err := handle.NormalizeUrl(link); err == nil && !ws.isVisited(normalized) {
@@ -81,6 +83,10 @@ func (ws *webSpider) Crawl(currentURL string, idx Indexer, depth int) {
                 })
             }
         }
+    }
+
+    if ws.rateLimiter != nil {
+        ws.rateLimiter.Wait()
     }
     
     doc, err := ws.getHTML(currentURL)

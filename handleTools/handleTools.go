@@ -212,6 +212,7 @@ type ConfigData struct {
 	OnlySameDomain 	bool		`json:"only_same_domain"`
 	MaxLinksInPage 	int			`json:"max_links_in_page"`
 	MaxDepth 		int			`json:"max_depth_crawl"`
+	Rate		int			`json:"rate"`
 }
 
 func UploadLocalConfiguration(fileName string) (*ConfigData, error) {

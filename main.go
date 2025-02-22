@@ -1,7 +1,7 @@
 package main
 
 import (
-	"SE/handleTools"
+	handle "SE/handleTools"
 	"SE/logger"
 	"SE/searchIndex"
 	"SE/stemmer"
@@ -15,12 +15,14 @@ func main() {
 	}
 	defer logger.File.Close()
 
-	cfg, err := handleTools.UploadLocalConfiguration("search_config.json")
+	cfg, err := handle.UploadLocalConfiguration("search_config.json")
 	if err != nil {
 		panic(err)
 	}
 	i := searchIndex.NewSearchIndex(stemmer.NewEnglishStemmer(), logger)
-	i.Start(cfg)
+	if err := i.Start(cfg); err != nil {
+		panic(err)
+	}
 
 	var query string
 	for {
@@ -29,7 +31,7 @@ func main() {
 	}
 }
 
-func Present(docs []*handleTools.Document) {
+func Present(docs []*handle.Document) {
 	for _, doc := range docs {
 		fmt.Printf("URL: %s\nDescription: %s\nScore: %f\n", doc.URL, doc.Description, doc.Score)
 	}
