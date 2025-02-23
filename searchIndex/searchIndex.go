@@ -36,12 +36,12 @@ func NewSearchIndex(Stemmer stemmer.Stemmer, l *logger.AsyncLogger) *searchIndex
 }
 
 func (idx *searchIndex) Start(config *handle.ConfigData) error {
-	wp := workerPool.NewWorkerPool(1000, 50000)
+	wp := workerPool.NewWorkerPool(config.WorkersCount, config.TasksCount)
     mp := new(sync.Map)
 	var rl *webSpider.RateLimiter
 	if config.Rate > 0 {
 		rl = webSpider.NewRateLimiter(config.Rate)
-		defer rl.Stop()
+		defer rl.Shutdown()
 	}
     for _, url := range config.BaseURLs {
         spider := webSpider.NewSpider(url, config.MaxDepth, config.MaxLinksInPage, mp, wp, config.OnlySameDomain, rl)
@@ -50,7 +50,7 @@ func (idx *searchIndex) Start(config *handle.ConfigData) error {
         })
     }
 	wp.Wait()
-    wp.Stop()
+	wp.Stop()
     return nil
 }
 
@@ -72,7 +72,7 @@ func (idx *searchIndex) Search(query string) []*handle.Document {
 
 	for id, tf_idf := range tf {
 		doc := idx.docs[id]
-		doc.Score = tf_idf
+		doc.Score = tf_idf / float32(doc.LineCount)
 		result = append(result, doc)
 	}
 

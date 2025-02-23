@@ -19,6 +19,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
 	i := searchIndex.NewSearchIndex(stemmer.NewEnglishStemmer(), logger)
 	if err := i.Start(cfg); err != nil {
 		panic(err)

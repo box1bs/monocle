@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,10 +21,11 @@ type Document struct {
 	Id      	uuid.UUID
 	URL     	string
 	Description string
+	LineCount	int
 	Score		float32
 }
 
-func ParseHTMLStream(htmlContent, baseURL string, maxLinks int, onlySameOrigin bool) (description, fullText string, links []string) {
+func ParseHTMLStream(htmlContent, baseURL string, maxLinks int, onlySameOrigin bool) (description, fullText string, links []string, lineCount int) {
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
 	var metaDesc, ogDesc, firstParagraph string
 	var inParagraph, inScriptOrStyle bool
@@ -36,7 +38,7 @@ func ParseHTMLStream(htmlContent, baseURL string, maxLinks int, onlySameOrigin b
 			if tokenizer.Err() == io.EOF {
 				break
 			}
-			//
+			log.Println("error parsing HTML with url: " + baseURL)
 			break
 		}
 
@@ -67,10 +69,11 @@ func ParseHTMLStream(htmlContent, baseURL string, maxLinks int, onlySameOrigin b
 				if isOG && content != "" && ogDesc == "" {
 					ogDesc = content
 				}
-			case "p":
-				if firstParagraph == "" {
-					inParagraph = true
-				}
+			case "p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6", "li":
+                lineCount++
+                if firstParagraph == "" && tagName == "p" {
+                    inParagraph = true
+                }
 			case "a":
 				for _, attr := range t.Attr {
 					if strings.ToLower(attr.Key) == "href" {
@@ -108,6 +111,8 @@ func ParseHTMLStream(htmlContent, baseURL string, maxLinks int, onlySameOrigin b
 			}
 			text := strings.TrimSpace(string(tokenizer.Text()))
 			if text != "" {
+				lineCount += strings.Count(text, "\n")
+				
 				fullTextBuilder.WriteString(text + " ")
 				if inParagraph && firstParagraph == "" {
 					firstParagraph += text + " "
@@ -209,10 +214,12 @@ func isSameOrigin(rawURL, baseURL string) (bool, error) {
 
 type ConfigData struct {
 	BaseURLs 		[]string	`json:"base_urls"`
+	WorkersCount	int			`json:"worker_count"`
+	TasksCount		int			`json:"task_count"`
 	OnlySameDomain 	bool		`json:"only_same_domain"`
 	MaxLinksInPage 	int			`json:"max_links_in_page"`
 	MaxDepth 		int			`json:"max_depth_crawl"`
-	Rate		int			`json:"rate"`
+	Rate			int			`json:"rate"`
 }
 
 func UploadLocalConfiguration(fileName string) (*ConfigData, error) {

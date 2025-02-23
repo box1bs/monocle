@@ -22,9 +22,9 @@ func NewRateLimiter(rate int) *RateLimiter {
 	return rl
 }
 
-func (rl *RateLimiter) HandleLimits(rate int) {
+func (rl *RateLimiter) HandleLimits(requestsPerSecond int) {
 	defer rl.wg.Done()
-	tic := time.NewTicker(time.Duration(1e9 / float64(rate)))
+	tic := time.NewTicker(time.Duration(1e9 / float64(requestsPerSecond)))
 	defer tic.Stop()
 
 	for {
@@ -41,11 +41,12 @@ func (rl *RateLimiter) HandleLimits(rate int) {
 	}
 }
 
-func (rl *RateLimiter) Wait() {
+func (rl *RateLimiter) GetToken() {
 	<-rl.token
 }
 
-func (rl *RateLimiter) Stop() {
+func (rl *RateLimiter) Shutdown() {
 	close(rl.quit)
 	rl.wg.Wait()
+	close(rl.token)
 }

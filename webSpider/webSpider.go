@@ -27,7 +27,6 @@ type webSpider struct {
 	baseURL        string
 	client         *http.Client
 	visited        *sync.Map
-	mu             *sync.RWMutex
 	maxD           int
 	maxLinksInPage int
 	Pool           *workerPool.WorkerPool
@@ -49,7 +48,6 @@ func NewSpider(baseURL string, maxDepth, maxLinksInPage int, mp *sync.Map, wp *w
 			},
 		},
 		visited:        mp,
-		mu:             new(sync.RWMutex),
 		maxD:           maxDepth,
 		maxLinksInPage: maxLinksInPage,
 		Pool:           wp,
@@ -86,7 +84,7 @@ func (ws *webSpider) Crawl(currentURL string, idx Indexer, depth int) {
     }
 
     if ws.rateLimiter != nil {
-        ws.rateLimiter.Wait()
+        ws.rateLimiter.GetToken()
     }
     
     doc, err := ws.getHTML(currentURL)
@@ -97,12 +95,13 @@ func (ws *webSpider) Crawl(currentURL string, idx Indexer, depth int) {
     
 	idx.Write(currentURL)
 
-    description, content, links := handle.ParseHTMLStream(doc, currentURL, ws.maxLinksInPage, ws.onlySameDomain)
+    description, content, links, lineCount := handle.ParseHTMLStream(doc, currentURL, ws.maxLinksInPage, ws.onlySameDomain)
 
     document := &handle.Document{
         Id: uuid.New(),
         URL: currentURL,
         Description: description,
+        LineCount: lineCount,
     }
     words := idx.TokenizeAndStem(content)
     idx.AddDocument(document, words)

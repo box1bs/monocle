@@ -17,7 +17,7 @@ func NewWorkerPool(size int, queueCapacity int) *WorkerPool {
 	wp := &WorkerPool{
 		tasks:     make(chan func(), size*2),
 		taskQueue: make(chan func(), queueCapacity),
-		wg:        &sync.WaitGroup{},
+		wg:        new(sync.WaitGroup),
 		quit:      make(chan struct{}),
 	}
 	go func() {
