@@ -1,8 +1,8 @@
 package webSpider
 
 import (
-    handle "SE/handleTools"
-    "SE/workerPool"
+    handle "Spider/pkg/handleTools"
+    "Spider/pkg/workerPool"
 
     "bufio"
     "context"

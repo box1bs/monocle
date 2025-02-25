@@ -1,4 +1,4 @@
-module SE
+module Spider
 
 go 1.23.3
 

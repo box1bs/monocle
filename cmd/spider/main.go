@@ -1,10 +1,10 @@
 package main
 
 import (
-	handle "SE/handleTools"
-	"SE/logger"
-	"SE/searchIndex"
-	"SE/stemmer"
+	handle "Spider/pkg/handleTools"
+	"Spider/pkg/logger"
+	"Spider/pkg/searchIndex"
+	"Spider/pkg/stemmer"
 	"fmt"
 )
 

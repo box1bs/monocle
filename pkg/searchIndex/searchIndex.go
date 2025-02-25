@@ -1,11 +1,11 @@
 package searchIndex
 
 import (
-	handle "SE/handleTools"
-	"SE/logger"
-	"SE/stemmer"
-	"SE/webSpider"
-	"SE/workerPool"
+	handle "Spider/pkg/handleTools"
+	"Spider/pkg/logger"
+	"Spider/pkg/stemmer"
+	"Spider/pkg/webSpider"
+	"Spider/pkg/workerPool"
 	"math"
 	"sort"
 	"strings"
