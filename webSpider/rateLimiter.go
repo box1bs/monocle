@@ -18,11 +18,11 @@ func NewRateLimiter(rate int) *RateLimiter {
 		wg:    new(sync.WaitGroup),
 	}
 	rl.wg.Add(1)
-	go rl.HandleLimits(rate)
+	go rl.handleLimits(rate)
 	return rl
 }
 
-func (rl *RateLimiter) HandleLimits(requestsPerSecond int) {
+func (rl *RateLimiter) handleLimits(requestsPerSecond int) {
 	defer rl.wg.Done()
 	tic := time.NewTicker(time.Duration(1e9 / float64(requestsPerSecond)))
 	defer tic.Stop()
@@ -41,8 +41,14 @@ func (rl *RateLimiter) HandleLimits(requestsPerSecond int) {
 	}
 }
 
-func (rl *RateLimiter) GetToken() {
+func (rl *RateLimiter) getToken() {
 	<-rl.token
+}
+
+func (rl *RateLimiter) maybeGetToken() {
+	if rl != nil {
+		rl.getToken()
+	}
 }
 
 func (rl *RateLimiter) Shutdown() {

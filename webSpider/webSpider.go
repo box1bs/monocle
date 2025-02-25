@@ -83,9 +83,7 @@ func (ws *webSpider) Crawl(currentURL string, idx Indexer, depth int) {
         }
     }
 
-    if ws.rateLimiter != nil {
-        ws.rateLimiter.GetToken()
-    }
+    ws.rateLimiter.maybeGetToken()
     
     doc, err := ws.getHTML(currentURL)
     if err != nil || doc == "" {
