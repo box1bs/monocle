@@ -30,7 +30,7 @@ func NewWorkerPool(size int, queueCapacity int) *WorkerPool {
 			}
 		}
 	}()
-	for i := 0; i < size; i++ {
+	for range size {
 		go wp.worker()
 	}
 	return wp

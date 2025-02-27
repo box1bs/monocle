@@ -21,6 +21,7 @@ type Indexer interface {
     Write(string)
     TokenizeAndStem(string) []string
     AddDocument(*handle.Document, []string)
+    IncUrlsCounter()
 }
 
 type webSpider struct {
@@ -56,7 +57,13 @@ func NewSpider(baseURL string, maxDepth, maxLinksInPage int, mp *sync.Map, wp *w
 	}
 }
 
-func (ws *webSpider) Crawl(currentURL string, idx Indexer, depth int) {
+func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, idx Indexer, depth int) {
+    select {
+    case <-ctx.Done():
+        return
+    default:
+    }
+
     if depth >= ws.maxD {
         return
     }
@@ -77,7 +84,7 @@ func (ws *webSpider) Crawl(currentURL string, idx Indexer, depth int) {
         for _, link := range urls {
             if normalized, err := handle.NormalizeUrl(link); err == nil && !ws.isVisited(normalized) {
                 go ws.Pool.Submit(func() {
-                    ws.Crawl(link, idx, depth+1)
+                    ws.CrawlWithContext(ctx, link, idx, depth+1)
                 })
             }
         }
@@ -91,6 +98,7 @@ func (ws *webSpider) Crawl(currentURL string, idx Indexer, depth int) {
         return
     }
     
+    idx.IncUrlsCounter()
 	idx.Write(currentURL)
 
     description, content, links, lineCount := handle.ParseHTMLStream(doc, currentURL, ws.maxLinksInPage, ws.onlySameDomain)
@@ -107,7 +115,7 @@ func (ws *webSpider) Crawl(currentURL string, idx Indexer, depth int) {
     for _, link := range links {
         if normalized, err := handle.NormalizeUrl(link); err == nil && !ws.isVisited(normalized) {
             go ws.Pool.Submit(func() {
-                ws.Crawl(link, idx, depth+1)
+                ws.CrawlWithContext(ctx, link, idx, depth+1)
             })
         }
     }

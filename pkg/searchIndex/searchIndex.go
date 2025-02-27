@@ -6,36 +6,42 @@ import (
 	"Spider/pkg/stemmer"
 	"Spider/pkg/webSpider"
 	"Spider/pkg/workerPool"
+	"context"
 	"math"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 	"unicode"
 
 	"github.com/google/uuid"
 )
 
-type searchIndex struct {
-	index     map[string]map[uuid.UUID]int
-	docs      map[uuid.UUID]*handle.Document
-	mu        *sync.RWMutex
-	stemmer   stemmer.Stemmer
-	stopWords *stemmer.StopWords
-	logger    *logger.AsyncLogger
+type SearchIndex struct {
+	index     	map[string]map[uuid.UUID]int
+	docs      	map[uuid.UUID]*handle.Document
+	mu        	*sync.RWMutex
+	stemmer   	stemmer.Stemmer
+	stopWords 	*stemmer.StopWords
+	logger    	*logger.AsyncLogger
+	UrlsCrawled int32
+	quitChan  	chan struct{}
 }
 
-func NewSearchIndex(Stemmer stemmer.Stemmer, l *logger.AsyncLogger) *searchIndex {
-	return &searchIndex{
+func NewSearchIndex(Stemmer stemmer.Stemmer, l *logger.AsyncLogger, quitChan chan struct{}) *SearchIndex {
+	return &SearchIndex{
 		index: make(map[string]map[uuid.UUID]int),
 		docs: make(map[uuid.UUID]*handle.Document),
 		mu: new(sync.RWMutex),
 		stopWords: stemmer.NewStopWords(),
 		stemmer: Stemmer,
 		logger: l,
+		quitChan: quitChan,
 	}
 }
 
-func (idx *searchIndex) Start(config *handle.ConfigData) error {
+func (idx *SearchIndex) Index(config *handle.ConfigData) error {
 	wp := workerPool.NewWorkerPool(config.WorkersCount, config.TasksCount)
     mp := new(sync.Map)
 	var rl *webSpider.RateLimiter
@@ -43,18 +49,34 @@ func (idx *searchIndex) Start(config *handle.ConfigData) error {
 		rl = webSpider.NewRateLimiter(config.Rate)
 		defer rl.Shutdown()
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
     for _, url := range config.BaseURLs {
         spider := webSpider.NewSpider(url, config.MaxDepth, config.MaxLinksInPage, mp, wp, config.OnlySameDomain, rl)
         spider.Pool.Submit(func() {
-            spider.Crawl(url, idx, 0)
+            spider.CrawlWithContext(ctx, url, idx, 0)
         })
     }
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-idx.quitChan:
+				cancel()
+				return
+			default:
+				time.Sleep(time.Millisecond * 500)
+			}
+		}
+	}()
 	wp.Wait()
+	done <- struct{}{}
 	wp.Stop()
     return nil
 }
 
-func (idx *searchIndex) Search(query string) []*handle.Document {
+func (idx *SearchIndex) Search(query string) []*handle.Document {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
@@ -83,11 +105,15 @@ func (idx *searchIndex) Search(query string) []*handle.Document {
 	return result
 }
 
-func (idx *searchIndex) Write(data string) {
+func (idx *SearchIndex) Write(data string) {
 	idx.logger.Write(data)
 }
 
-func (idx *searchIndex) AddDocument(doc *handle.Document, words []string) {
+func (idx *SearchIndex) IncUrlsCounter() {
+	atomic.AddInt32(&idx.UrlsCrawled, 1)
+}
+
+func (idx *SearchIndex) AddDocument(doc *handle.Document, words []string) {
     idx.mu.Lock()
     defer idx.mu.Unlock()
 	
@@ -101,7 +127,7 @@ func (idx *searchIndex) AddDocument(doc *handle.Document, words []string) {
     }
 }
 
-func (idx *searchIndex) TokenizeAndStem(text string) []string {
+func (idx *SearchIndex) TokenizeAndStem(text string) []string {
     text = strings.ToLower(text)
     
     var tokens []string
