@@ -1,11 +1,11 @@
 package searchIndex
 
 import (
-	handle "Spider/pkg/handleTools"
-	"Spider/pkg/logger"
-	"Spider/pkg/stemmer"
-	"Spider/pkg/webSpider"
-	"Spider/pkg/workerPool"
+	handle "github.com/box1bs/Saturday/pkg/handleTools"
+	"github.com/box1bs/Saturday/pkg/logger"
+	"github.com/box1bs/Saturday/pkg/stemmer"
+	"github.com/box1bs/Saturday/pkg/webSpider"
+	"github.com/box1bs/Saturday/pkg/workerPool"
 	"context"
 	"math"
 	"sort"

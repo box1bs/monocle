@@ -1,11 +1,11 @@
 package main
 
 import (
-	handle "Spider/pkg/handleTools"
-	"Spider/pkg/logger"
-	"Spider/pkg/searchIndex"
-	"Spider/pkg/stemmer"
-	grpcServer "Spider/pkg/gRPC"
+	handle "github.com/box1bs/Saturday/pkg/handleTools"
+	"github.com/box1bs/Saturday/pkg/logger"
+	"github.com/box1bs/Saturday/pkg/searchIndex"
+	"github.com/box1bs/Saturday/pkg/stemmer"
+	grpcServer "github.com/box1bs/Saturday/pkg/gRPC"
 	"flag"
 	"fmt"
 	"log"

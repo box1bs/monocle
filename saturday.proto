@@ -1,9 +1,9 @@
 syntax = "proto3";
 
-package spider;
+package saturday;
 option go_package = "pkg/gRPC";
 
-service SpiderService {
+service SaturdayService {
   // Control the crawler
   rpc StartCrawl(CrawlRequest) returns (CrawlResponse) {}
   rpc StopCrawl(StopRequest) returns (StopResponse) {}

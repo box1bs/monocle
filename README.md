@@ -1,8 +1,8 @@
-# Spider - Web Crawler and Search Engine
+# Saturday - Web Crawler and Search Engine
 
 ## Project Overview
 
-Spider is a Go-based web crawler and search engine that efficiently indexes web content for searching. The system crawls specified websites, extracts and processes text content, and builds a search index that supports relevancy-based querying.
+Saturday is a Go-based web crawler and search engine that efficiently indexes web content for searching. The system crawls specified websites, extracts and processes text content, and builds a search index that supports relevancy-based querying.
 
 ## Core Features
 

@@ -1,4 +1,4 @@
-module Spider
+module github.com/box1bs/Saturday
 
 go 1.23.3
 

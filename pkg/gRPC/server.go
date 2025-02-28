@@ -1,10 +1,10 @@
 package gRPC
 
 import (
-	handle "Spider/pkg/handleTools"
-	"Spider/pkg/logger"
-	"Spider/pkg/searchIndex"
-	"Spider/pkg/stemmer"
+	handle "github.com/box1bs/Saturday/pkg/handleTools"
+	"github.com/box1bs/Saturday/pkg/logger"
+	"github.com/box1bs/Saturday/pkg/searchIndex"
+	"github.com/box1bs/Saturday/pkg/stemmer"
 	"context"
 	"fmt"
 	"log"
@@ -16,7 +16,7 @@ import (
 )
 
 type server struct {
-	UnimplementedSpiderServiceServer
+	UnimplementedSaturdayServiceServer
 	activeJobs     map[string]*jobInfo
 	jobsMutex      sync.RWMutex
 	logger         *logger.AsyncLogger
@@ -168,7 +168,7 @@ func StartServer(port int, logger *logger.AsyncLogger) error {
 	}
 	
 	s := grpc.NewServer()
-	RegisterSpiderServiceServer(s, NewSpiderServer(logger))
+	RegisterSaturdayServiceServer(s, NewSpiderServer(logger))
 	
 	log.Printf("gRPC server listening on port %d", port)
 	return s.Serve(lis)
