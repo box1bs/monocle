@@ -13,6 +13,7 @@ Saturday is a Go-based web crawler and search engine that efficiently indexes we
 5. **TF-IDF Search**: Uses term frequency-inverse document frequency algorithm for relevancy-based search results
 6. **Sitemap Support**: Automatically detects and processes XML sitemaps
 7. **Configurable Parameters**: Customizable crawl behavior through configuration files
+8. **gRPC API**: Provides a service interface for remote control and search functionality
 
 ## System Architecture
 
@@ -27,6 +28,7 @@ The project is structured into several packages with clear separation of concern
 5. **Rate Limiter**: Controls request rates to respect server limits
 6. **Document Handler**: Processes HTML content and extracts relevant information
 7. **Logger**: Provides asynchronous logging capabilities
+8. **gRPC Server**: Exposes the system's functionality via a service API
 
 ## Technical Implementation
 
@@ -60,6 +62,7 @@ The project uses a worker pool pattern:
 1. A configurable number of worker goroutines process crawling tasks
 2. Tasks are submitted to a queue with configurable capacity
 3. A wait group manages synchronization for graceful shutdown
+4. A cancellation context enables graceful stopping of in-progress crawls
 
 ## Configuration Options
 
@@ -90,7 +93,8 @@ Key parameters:
 
 ### Main Components
 
-- **`main.go`**: Program entry point, initializes logger, configuration, and search index
+- **`main.go`**: Program entry point, initializes logger, and either starts CLI mode or gRPC server
+- **`server.go`**: gRPC server implementation for remote control and search
 - **`handleTools.go`**: HTML parsing and URL normalization utilities
 - **`searchIndex.go`**: Core search index implementation with TF-IDF scoring
 - **`stemmer.go`**: English stemming algorithm and stop words management
@@ -101,42 +105,71 @@ Key parameters:
 
 ## Usage Examples
 
-### Starting the Crawler
+### Command Line Mode
 
-```go
-// Initialize logger
-logger, err := logger.NewAsyncLogger("crawled.txt")
-if err != nil {
-    panic(err)
-}
-defer logger.File.Close()
+Saturday can be run in CLI mode with the following flags:
 
-// Load configuration
-cfg, err := handle.UploadLocalConfiguration("search_config.json")
-if err != nil {
-    panic(err)
-}
+```bash
+# Start in CLI mode with default configuration
+./saturday --cli
 
-// Create and start search index
-i := searchIndex.NewSearchIndex(stemmer.NewEnglishStemmer(), logger)
-if err := i.Start(cfg); err != nil {
-    panic(err)
-}
+# Start with a custom configuration file
+./saturday --cli --config=my_config.json
+
+# Specify a custom log file
+./saturday --cli --log=my_crawl_log.txt
 ```
 
-### Performing Searches
+### gRPC Server Mode
+
+Saturday can also be run as a gRPC server for remote control:
+
+```bash
+# Start the gRPC server on the default port (50051)
+./saturday
+
+# Start the gRPC server on a custom port
+./saturday --grpc-port=8080
+```
+
+### Using the gRPC API
+
+The gRPC API provides endpoints for controlling the crawler and searching the index:
 
 ```go
-// Interactive search loop
-var query string
-for {
-    fmt.Scan(&query)
-    results := i.Search(query)
-    
-    for _, doc := range results {
-        fmt.Printf("URL: %s\nDescription: %s\nScore: %f\n", 
-                  doc.URL, doc.Description, doc.Score)
-    }
+// Initialize a client
+conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure())
+client := saturday.NewSaturdayServiceClient(conn)
+
+// Start a crawl job
+crawlReq := &saturday.CrawlRequest{
+    BaseUrls: []string{"https://example.com"},
+    WorkerCount: 10,
+    TaskCount: 100,
+    MaxLinksInPage: 50,
+    MaxDepthCrawl: 3,
+    OnlySameDomain: true,
+    Rate: 5,
+}
+crawlResp, err := client.StartCrawl(context.Background(), crawlReq)
+jobID := crawlResp.JobId
+
+// Check crawl status
+statusResp, err := client.GetCrawlStatus(context.Background(), &saturday.StatusRequest{
+    JobId: jobID,
+})
+
+// Search indexed content
+searchResp, err := client.Search(context.Background(), &saturday.SearchRequest{
+    Query: "example search",
+    MaxResults: 10,
+    JobId: jobID,
+})
+
+// Process search results
+for _, result := range searchResp.Results {
+    fmt.Printf("URL: %s\nDescription: %s\nScore: %f\n\n", 
+        result.Url, result.Description, result.Score)
 }
 ```
 
@@ -147,6 +180,7 @@ for {
 - Asynchronous logging minimizes I/O bottlenecks
 - URL normalization and visit tracking prevent redundant crawling
 - The search index uses memory-efficient data structures for term-document relationships
+- Crawl jobs can be stopped gracefully via cancellation contexts
 
 ## Technical Requirements
 
@@ -154,6 +188,8 @@ for {
 - External dependencies:
   - github.com/google/uuid
   - golang.org/x/net/html
+  - google.golang.org/grpc
+  - google.golang.org/protobuf
 
 ## License
 
