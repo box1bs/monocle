@@ -1,19 +1,20 @@
 package webSpider
 
 import (
-    handle "github.com/box1bs/Saturday/pkg/handleTools"
-    "github.com/box1bs/Saturday/pkg/workerPool"
+	handle "github.com/box1bs/Saturday/pkg/handleTools"
+	tree "github.com/box1bs/Saturday/pkg/treeIndex"
+	"github.com/box1bs/Saturday/pkg/workerPool"
 
-    "bufio"
-    "context"
-    "fmt"
-    "log"
-    "net/http"
-    "strings"
-    "sync"
-    "time"
+	"bufio"
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
 
-    "github.com/google/uuid"
+	"github.com/google/uuid"
 )
 
 // Indexer defines the minimal interface required by the spider.
@@ -57,7 +58,7 @@ func NewSpider(baseURL string, maxDepth, maxLinksInPage int, mp *sync.Map, wp *w
 	}
 }
 
-func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, idx Indexer, depth int) {
+func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, idx Indexer, parent *tree.TreeNode, depth int) {
     select {
     case <-ctx.Done():
         return
@@ -83,8 +84,10 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, id
     if urls, err := ws.haveSitemap(currentURL); urls != nil && err == nil {
         for _, link := range urls {
             if normalized, err := handle.NormalizeUrl(link); err == nil && !ws.isVisited(normalized) {
+                child := tree.NewNode(link)
+                parent.AddChild(child)
                 go ws.Pool.Submit(func() {
-                    ws.CrawlWithContext(ctx, link, idx, depth+1)
+                    ws.CrawlWithContext(ctx, link, idx, child, depth+1)
                 })
             }
         }
@@ -114,8 +117,10 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, id
         
     for _, link := range links {
         if normalized, err := handle.NormalizeUrl(link); err == nil && !ws.isVisited(normalized) {
+            child := tree.NewNode(link)
+            parent.AddChild(child)
             go ws.Pool.Submit(func() {
-                ws.CrawlWithContext(ctx, link, idx, depth+1)
+                ws.CrawlWithContext(ctx, link, idx, child, depth+1)
             })
         }
     }

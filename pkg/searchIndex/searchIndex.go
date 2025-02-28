@@ -1,11 +1,6 @@
 package searchIndex
 
 import (
-	handle "github.com/box1bs/Saturday/pkg/handleTools"
-	"github.com/box1bs/Saturday/pkg/logger"
-	"github.com/box1bs/Saturday/pkg/stemmer"
-	"github.com/box1bs/Saturday/pkg/webSpider"
-	"github.com/box1bs/Saturday/pkg/workerPool"
 	"context"
 	"math"
 	"sort"
@@ -14,6 +9,13 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode"
+
+	handle "github.com/box1bs/Saturday/pkg/handleTools"
+	"github.com/box1bs/Saturday/pkg/logger"
+	"github.com/box1bs/Saturday/pkg/stemmer"
+	tree "github.com/box1bs/Saturday/pkg/treeIndex"
+	"github.com/box1bs/Saturday/pkg/webSpider"
+	"github.com/box1bs/Saturday/pkg/workerPool"
 
 	"github.com/google/uuid"
 )
@@ -25,6 +27,7 @@ type SearchIndex struct {
 	stemmer   	stemmer.Stemmer
 	stopWords 	*stemmer.StopWords
 	logger    	*logger.AsyncLogger
+	root 		*tree.TreeNode
 	UrlsCrawled int32
 	quitChan  	chan struct{}
 }
@@ -36,6 +39,7 @@ func NewSearchIndex(Stemmer stemmer.Stemmer, l *logger.AsyncLogger, quitChan cha
 		mu: new(sync.RWMutex),
 		stopWords: stemmer.NewStopWords(),
 		stemmer: Stemmer,
+		root: tree.NewNode("/"),
 		logger: l,
 		quitChan: quitChan,
 	}
@@ -52,9 +56,11 @@ func (idx *SearchIndex) Index(config *handle.ConfigData) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
     for _, url := range config.BaseURLs {
+		node := tree.NewNode(url)
+		idx.root.AddChild(node)
         spider := webSpider.NewSpider(url, config.MaxDepth, config.MaxLinksInPage, mp, wp, config.OnlySameDomain, rl)
         spider.Pool.Submit(func() {
-            spider.CrawlWithContext(ctx, url, idx, 0)
+            spider.CrawlWithContext(ctx, url, idx, node, 0)
         })
     }
 	go func() {
