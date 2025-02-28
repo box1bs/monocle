@@ -30,7 +30,7 @@ type jobInfo struct {
 	stopCrawlChan  	chan struct{}
 }
 
-func NewSpiderServer(logger *logger.AsyncLogger) *server {
+func NewSaturdayServer(logger *logger.AsyncLogger) *server {
 	return &server{
 		activeJobs:     make(map[string]*jobInfo),
 		logger:         logger,
@@ -168,7 +168,7 @@ func StartServer(port int, logger *logger.AsyncLogger) error {
 	}
 	
 	s := grpc.NewServer()
-	RegisterSaturdayServiceServer(s, NewSpiderServer(logger))
+	RegisterSaturdayServiceServer(s, NewSaturdayServer(logger))
 	
 	log.Printf("gRPC server listening on port %d", port)
 	return s.Serve(lis)
