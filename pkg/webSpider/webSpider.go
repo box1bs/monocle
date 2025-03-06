@@ -2,6 +2,7 @@ package webSpider
 
 import (
 	handle "github.com/box1bs/Saturday/pkg/handleTools"
+	parser "github.com/box1bs/Saturday/pkg/robots_parser"
 	tree "github.com/box1bs/Saturday/pkg/treeIndex"
 	"github.com/box1bs/Saturday/pkg/workerPool"
 
@@ -10,12 +11,15 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
 // Indexer defines the minimal interface required by the spider.
 type Indexer interface {
@@ -80,6 +84,17 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, id
     }
     
     log.Println("Parsing: " + currentURL)
+
+    if rules, err := parser.FetchRobotsTxt(currentURL); rules != "" && err == nil {
+        robotsTXT := parser.ParseRobotsTxt(rules)
+        parent.SetRules(robotsTXT)
+    } else if parent.GetRules() == nil {
+        uri, _ := url.Parse(currentURL)
+        if rules, _ = parser.FetchRobotsTxt(uri.Scheme + "://" + uri.Host + "/"); rules != "" {
+            robotsTXT := parser.ParseRobotsTxt(rules)
+            parent.SetRules(robotsTXT)
+        }
+    }
     
     if urls, err := ws.haveSitemap(currentURL); urls != nil && err == nil {
         for _, link := range urls {
@@ -104,7 +119,7 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, id
     idx.IncUrlsCounter()
 	idx.Write(currentURL)
 
-    description, content, links, lineCount := handle.ParseHTMLStream(doc, currentURL, ws.maxLinksInPage, ws.onlySameDomain)
+    description, content, links, lineCount := handle.ParseHTMLStream(doc, currentURL, userAgent, ws.maxLinksInPage, ws.onlySameDomain, parent.GetRules())
 
     document := &handle.Document{
         Id: uuid.New(),
@@ -170,7 +185,7 @@ func (ws *webSpider) getHTML(URL string) (string, error) {
         return "", err
     }
 
-    req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+    req.Header.Set("User-Agent", userAgent)
     req.Header.Set("Accept", "text/html")
 
     resp, err := ws.client.Do(req)

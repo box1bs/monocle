@@ -5,7 +5,7 @@ import (
 	"github.com/box1bs/Saturday/pkg/logger"
 	"github.com/box1bs/Saturday/pkg/searchIndex"
 	"github.com/box1bs/Saturday/pkg/stemmer"
-	grpcServer "github.com/box1bs/Saturday/pkg/gRPC"
+	"github.com/box1bs/Saturday/pkg/server"
 	"flag"
 	"fmt"
 	"log"
@@ -15,46 +15,40 @@ import (
 )
 
 func main() {
-	// Parse command line flags
 	var (
 		configFile = flag.String("config", "search_config.json", "Path to configuration file")
 		logFile    = flag.String("log", "crawled.txt", "Path to log file")
-		grpcPort   = flag.Int("grpc-port", 50051, "gRPC server port")
+		httpPort   = flag.Int("grpc-port", 50051, "gRPC server port")
 		runCli     = flag.Bool("cli", false, "Run in CLI mode instead of gRPC server")
 	)
 	flag.Parse()
 
-	// Initialize logger
 	logger, err := logger.NewAsyncLogger(*logFile)
 	if err != nil {
 		panic(err)
 	}
 	defer logger.File.Close()
 
-	// If CLI mode is enabled, run traditional CLI workflow
 	if *runCli {
 		runCliMode(logger, *configFile)
 		return
 	}
 
-	// Otherwise, start gRPC server
-	log.Printf("Starting gRPC server on port %d", *grpcPort)
-	
-	// Set up graceful shutdown
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	
+
 	errChan := make(chan error)
 	go func() {
-		errChan <- grpcServer.StartServer(*grpcPort, logger)
+		errChan <- rest.StartServer(*httpPort, logger)
 	}()
-	
-	// Wait for shutdown signal or error
+
 	select {
-	case <-stop:
-		log.Println("Received shutdown signal")
-	case err := <-errChan:
-		log.Printf("Server error: %v", err)
+		case <-stop:
+			log.Println("Shutting down...")
+			return
+		case err := <-errChan:
+			log.Printf("Error: %v\n", err)
+			return
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/box1bs/Saturday/pkg/robots_parser"
 	"github.com/google/uuid"
 	"golang.org/x/net/html"
 )
@@ -25,7 +26,7 @@ type Document struct {
 	Score		float32
 }
 
-func ParseHTMLStream(htmlContent, baseURL string, maxLinks int, onlySameOrigin bool) (description, fullText string, links []string, lineCount int) {
+func ParseHTMLStream(htmlContent, baseURL, userAgent string, maxLinks int, onlySameOrigin bool, rules *robots_parser.RobotsTxt) (description, fullText string, links []string, lineCount int) {
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
 	var metaDesc, ogDesc, firstParagraph string
 	var inParagraph, inScriptOrStyle bool
@@ -79,6 +80,12 @@ func ParseHTMLStream(htmlContent, baseURL string, maxLinks int, onlySameOrigin b
 					if strings.ToLower(attr.Key) == "href" {
 						link := MakeAbsoluteURL(baseURL, attr.Val)
 						if link != "" && len(links) < maxLinks {
+							if rules != nil {
+								uri, _ := url.Parse(link)
+								if !rules.IsAllowed(userAgent, uri.Path) {
+									break
+								}
+							}
 							if onlySameOrigin {
 								same, err := isSameOrigin(link, baseURL)
 								if err != nil {
