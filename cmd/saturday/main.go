@@ -18,7 +18,7 @@ func main() {
 	var (
 		configFile = flag.String("config", "search_config.json", "Path to configuration file")
 		logFile    = flag.String("log", "crawled.txt", "Path to log file")
-		httpPort   = flag.Int("grpc-port", 50051, "gRPC server port")
+		httpPort   = flag.Int("srv-port", 50051, "gRPC server port")
 		runCli     = flag.Bool("cli", false, "Run in CLI mode instead of gRPC server")
 	)
 	flag.Parse()
