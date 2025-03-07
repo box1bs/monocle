@@ -136,7 +136,7 @@ Saturday can also be run as a REST server for remote control:
 ./saturday
 
 # Start the REST server on a custom port
-./saturday --grpc-port=8080
+./saturday --srv-port=8080
 ```
 
 ### Using the REST API
