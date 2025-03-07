@@ -139,6 +139,11 @@ func ParseHTMLStream(htmlContent, baseURL, userAgent string, maxLinks int, onlyS
 	return
 }
 
+func SameDomain(baseURL, href string) bool {
+	same, _ := isSameOrigin(href, baseURL)
+	return same
+}
+
 func MakeAbsoluteURL(baseURL, href string) string {
     if strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") {
         return href
@@ -158,6 +163,9 @@ func NormalizeUrl(rawUrl string) (string, error) {
     if err != nil {
         return "", err
     }
+
+	parsedUrl = cleanUTMParams(parsedUrl)
+	parsedUrl.Host = strings.TrimPrefix(parsedUrl.Host, "www.")
     
     var normalized strings.Builder
     normalized.Grow(len(parsedUrl.Host) + len(parsedUrl.Path))
@@ -166,6 +174,17 @@ func NormalizeUrl(rawUrl string) (string, error) {
     
     result := normalized.String()
     return strings.TrimSuffix(result, "/"), nil
+}
+
+func cleanUTMParams(rawURL *url.URL) *url.URL {
+	query := rawURL.Query()
+	for key := range query {
+		if strings.HasPrefix(key, "utm_") {
+			query.Del(key)
+		}
+	}
+	rawURL.RawQuery = query.Encode()
+	return rawURL
 }
 
 func GetSitemapURLs(URL string, cli *http.Client, limiter int) ([]string, error) {

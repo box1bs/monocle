@@ -101,6 +101,9 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, id
             if normalized, err := handle.NormalizeUrl(link); err == nil && !ws.isVisited(normalized) {
                 child := tree.NewNode(link)
                 parent.AddChild(child)
+                if ws.onlySameDomain || handle.SameDomain(ws.baseURL, link) {
+                    child.SetRules(parent.GetRules())
+                }
                 go ws.Pool.Submit(func() {
                     ws.CrawlWithContext(ctx, link, idx, child, depth+1)
                 })
@@ -129,11 +132,14 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, id
     }
     words := idx.TokenizeAndStem(content)
     idx.AddDocument(document, words)
-        
+
     for _, link := range links {
         if normalized, err := handle.NormalizeUrl(link); err == nil && !ws.isVisited(normalized) {
             child := tree.NewNode(link)
             parent.AddChild(child)
+            if ws.onlySameDomain || handle.SameDomain(ws.baseURL, link) {
+                child.SetRules(parent.GetRules())
+            }
             go ws.Pool.Submit(func() {
                 ws.CrawlWithContext(ctx, link, idx, child, depth+1)
             })
