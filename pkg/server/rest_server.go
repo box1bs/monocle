@@ -156,7 +156,7 @@ func (s *server) stopCrawlHandler(w http.ResponseWriter, r *http.Request) {
 func (s *server) getCrawlStatusHandler(w http.ResponseWriter, r *http.Request) {
 	jobId := r.URL.Query().Get("job_id")
 	if jobId == "" {
-		http.Error(w, "Отсутствует параметр job_id", http.StatusBadRequest)
+		http.Error(w, "Empty param job_id", http.StatusBadRequest)
 		return
 	}
 	s.jobsMutex.RLock()

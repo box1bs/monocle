@@ -12,8 +12,9 @@ Saturday is a Go-based web crawler and search engine that efficiently indexes we
 4. **Text Processing**: Implements stemming and stop word filtering for improved search quality
 5. **TF-IDF Search**: Uses term frequency-inverse document frequency algorithm for relevancy-based search results
 6. **Sitemap Support**: Automatically detects and processes XML sitemaps
-7. **Configurable Parameters**: Customizable crawl behavior through configuration files
-8. **gRPC API**: Provides a service interface for remote control and search functionality
+7. **Robots.txt Support**: Respects robots.txt directives during crawling
+8. **Configurable Parameters**: Customizable crawl behavior through configuration files
+9. **REST API**: Provides HTTP endpoints for remote control and search functionality
 
 ## System Architecture
 
@@ -28,7 +29,9 @@ The project is structured into several packages with clear separation of concern
 5. **Rate Limiter**: Controls request rates to respect server limits
 6. **Document Handler**: Processes HTML content and extracts relevant information
 7. **Logger**: Provides asynchronous logging capabilities
-8. **gRPC Server**: Exposes the system's functionality via a service API
+8. **REST Server**: Exposes the system's functionality via HTTP endpoints
+9. **Robots.txt Parser**: Parses and enforces robots.txt rules during crawling
+10. **Tree Index**: Maintains a hierarchical structure of crawled pages
 
 ## Technical Implementation
 
@@ -38,12 +41,14 @@ The crawler works as follows:
 
 1. Starts with a set of base URLs defined in the configuration
 2. For each base URL, it creates a Spider instance
-3. The Spider checks for a sitemap.xml file to discover additional URLs
-4. For each discovered page:
+3. The Spider checks for robots.txt to determine crawling permissions
+4. The Spider checks for a sitemap.xml file to discover additional URLs
+5. For each discovered page:
    - Extracts links and content
    - Processes text (removes stop words, applies stemming)
    - Adds the processed content to the search index
    - Enqueues new discovered links for crawling (within depth limit)
+   - Respects robots.txt directives during crawling
 
 ### Search Functionality
 
@@ -93,15 +98,17 @@ Key parameters:
 
 ### Main Components
 
-- **`main.go`**: Program entry point, initializes logger, and either starts CLI mode or gRPC server
-- **`server.go`**: gRPC server implementation for remote control and search
+- **`main.go`**: Program entry point, initializes logger, and either starts CLI mode or REST server
+- **`rest_server.go`**: REST server implementation for remote control and search
 - **`handleTools.go`**: HTML parsing and URL normalization utilities
 - **`searchIndex.go`**: Core search index implementation with TF-IDF scoring
 - **`stemmer.go`**: English stemming algorithm and stop words management
-- **`webSpider.go`**: Web crawling logic including sitemap processing
+- **`webSpider.go`**: Web crawling logic including sitemap processing and robots.txt integration
 - **`workerPool.go`**: Concurrent task execution framework
 - **`rateLimiter.go`**: Controls request rate to target servers
 - **`asyncLogger.go`**: Non-blocking logging implementation
+- **`robots_txt_parser.go`**: Parses and enforces robots.txt directives
+- **`treeIndex.go`**: Maintains a hierarchical structure of crawled pages
 
 ## Usage Examples
 
@@ -120,58 +127,62 @@ Saturday can be run in CLI mode with the following flags:
 ./saturday --cli --log=my_crawl_log.txt
 ```
 
-### gRPC Server Mode
+### REST Server Mode
 
-Saturday can also be run as a gRPC server for remote control:
+Saturday can also be run as a REST server for remote control:
 
 ```bash
-# Start the gRPC server on the default port (50051)
+# Start the REST server on the default port (50051)
 ./saturday
 
-# Start the gRPC server on a custom port
+# Start the REST server on a custom port
 ./saturday --grpc-port=8080
 ```
 
-### Using the gRPC API
+### Using the REST API
 
-The gRPC API provides endpoints for controlling the crawler and searching the index:
+The REST API provides endpoints for controlling the crawler and searching the index:
 
-```go
-// Initialize a client
-conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure())
-client := saturday.NewSaturdayServiceClient(conn)
-
-// Start a crawl job
-crawlReq := &saturday.CrawlRequest{
-    BaseUrls: []string{"https://example.com"},
-    WorkerCount: 10,
-    TaskCount: 100,
-    MaxLinksInPage: 50,
-    MaxDepthCrawl: 3,
-    OnlySameDomain: true,
-    Rate: 5,
+```
+# Start a crawl job
+POST /crawl/start
+{
+    "base_urls": ["https://example.com"],
+    "worker_count": 10,
+    "task_count": 100,
+    "max_links_in_page": 50,
+    "max_depth_crawl": 3,
+    "only_same_domain": true,
+    "rate": 5
 }
-crawlResp, err := client.StartCrawl(context.Background(), crawlReq)
-jobID := crawlResp.JobId
 
-// Check crawl status
-statusResp, err := client.GetCrawlStatus(context.Background(), &saturday.StatusRequest{
-    JobId: jobID,
-})
+# Check crawl status
+GET /crawl/status?job_id=<job_id>
 
-// Search indexed content
-searchResp, err := client.Search(context.Background(), &saturday.SearchRequest{
-    Query: "example search",
-    MaxResults: 10,
-    JobId: jobID,
-})
+# Stop a crawl job
+POST /crawl/stop
+{
+    "job_id": "<job_id>"
+}
 
-// Process search results
-for _, result := range searchResp.Results {
-    fmt.Printf("URL: %s\nDescription: %s\nScore: %f\n\n", 
-        result.Url, result.Description, result.Score)
+# Search indexed content
+POST /search
+{
+    "job_id": "<job_id>",
+    "query": "example search",
+    "max_results": 10
 }
 ```
+
+## Robots.txt Handling
+
+Saturday respects robots.txt directives during crawling:
+
+1. The crawler attempts to fetch and parse robots.txt for each domain
+2. Both explicit Allow and Disallow rules are supported
+3. User-agent specific rules are applied when available
+4. Fallback to wildcard (*) rules when no specific user-agent matches
+5. Robots.txt rules are cached and shared across crawl operations for the same domain
 
 ## Performance Considerations
 
@@ -181,6 +192,7 @@ for _, result := range searchResp.Results {
 - URL normalization and visit tracking prevent redundant crawling
 - The search index uses memory-efficient data structures for term-document relationships
 - Crawl jobs can be stopped gracefully via cancellation contexts
+- Multiple concurrent crawl jobs can be managed via the REST API
 
 ## Technical Requirements
 
@@ -188,8 +200,6 @@ for _, result := range searchResp.Results {
 - External dependencies:
   - github.com/google/uuid
   - golang.org/x/net/html
-  - google.golang.org/grpc
-  - google.golang.org/protobuf
 
 ## License
 
