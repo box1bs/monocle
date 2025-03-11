@@ -128,9 +128,11 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, id
         Id: uuid.New(),
         URL: currentURL,
         Description: description,
+        FullText: content,
         LineCount: lineCount,
     }
     words := idx.TokenizeAndStem(content)
+    document.WordsCount = len(words)
     idx.AddDocument(document, words)
 
     for _, link := range links {

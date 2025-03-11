@@ -2,6 +2,7 @@ package searchIndex
 
 import (
 	"context"
+	"log"
 	"math"
 	"sort"
 	"strings"
@@ -29,6 +30,7 @@ type SearchIndex struct {
 	logger    	*logger.AsyncLogger
 	root 		*tree.TreeNode
 	UrlsCrawled int32
+	AvgLen	 	float64
 	quitChan  	chan struct{}
 }
 
@@ -82,33 +84,110 @@ func (idx *SearchIndex) Index(config *handle.ConfigData) error {
     return nil
 }
 
+type requestRanking struct {
+	includesWords 	int
+	relation 		float64
+	tf_idf 			float64
+	bm25 			float64
+	//any ranking scores
+}
+
+func (idx *SearchIndex) updateAVGLen() {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	var wordCount int
+	for _, doc := range idx.docs {
+		wordCount += doc.WordsCount
+	}
+
+	idx.AvgLen = float64(wordCount) / float64(len(idx.docs))
+}
+
 func (idx *SearchIndex) Search(query string) []*handle.Document {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
-	result := make([]*handle.Document, 0)
-	tf := make(map[uuid.UUID]float32)
+	if idx.AvgLen == 0 {
+		idx.updateAVGLen()
+	}
+
+	rank := make(map[uuid.UUID]*requestRanking)
 
 	words := idx.TokenizeAndStem(query)
+	idx.fetchDocuments(words, rank)
+	
+	result := make([]*handle.Document, 0)
+	
+	alreadyIncluded := make(map[uuid.UUID]struct{})
 	for _, word := range words {
-		idf := float32(math.Log(float64(len(idx.docs)) / float64(len(idx.index[word]))))
-
+		idf := math.Log(float64(len(idx.docs)) / float64(len(idx.index[word]))) + 1.0
+		
 		for docID, freq := range idx.index[word] {
-			tf[docID] += float32(freq) * idf
+			doc := idx.docs[docID]
+			rank[docID].tf_idf += (float64(freq) / float64(doc.WordsCount)) * idf / float64(doc.LineCount)
+			rank[docID].bm25 += culcBM25(idf, float64(freq), idx.docs[docID], idx.AvgLen)
+
+			if _, ok := alreadyIncluded[docID]; ok {
+				continue
+			}
+			alreadyIncluded[docID] = struct{}{}
+			result = append(result, doc)
 		}
 	}
 
-	for id, tf_idf := range tf {
-		doc := idx.docs[id]
-		doc.Score = tf_idf / float32(doc.LineCount)
-		result = append(result, doc)
+	predicted, err := handleBinaryScore(query, result)
+	if err != nil {
+		log.Println(err)
+		return nil
+	}
+
+	for _, rel := range predicted {
+		rank[rel.Doc.Id].relation = rel.Score
 	}
 
 	sort.Slice(result, func(i, j int) bool {
-		return result[i].Score > result[j].Score
+		return rank[result[i].Id].relation > rank[result[j].Id].relation || rank[result[i].Id].includesWords > rank[result[j].Id].includesWords || 
+		(rank[result[i].Id].relation == rank[result[j].Id].relation && rank[result[i].Id].includesWords == rank[result[j].Id].includesWords) && 
+		(rank[result[i].Id].bm25 > rank[result[j].Id].bm25 || rank[result[i].Id].tf_idf > rank[result[j].Id].tf_idf)
 	})
 
 	return result
+}
+
+func (idx *SearchIndex) fetchDocuments(words []string, rank map[uuid.UUID]*requestRanking) {
+	result := idx.index[words[0]]
+	if result == nil {
+		return
+	}
+
+	for _, word := range words[1:] {
+		docs, ex := idx.index[word]
+		if !ex {
+			continue
+		}
+		result = intersect(result, docs, rank)
+		if len(result) == 0 {
+			return
+		}
+	}
+}
+
+func intersect(a, b map[uuid.UUID]int, rank map[uuid.UUID]*requestRanking) map[uuid.UUID]int {
+    result := make(map[uuid.UUID]int)
+    for key := range a {
+        if v, exists := b[key]; exists {
+			rank[key].includesWords++
+            result[key] = a[key] + v
+        }
+    }
+    return result
+}
+
+func culcBM25(idf float64, tf float64, doc *handle.Document, avgLen float64) float64 {
+	k1 := 1.2
+	b := 0.75
+	return idf * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * float64(doc.WordsCount) / avgLen))
 }
 
 func (idx *SearchIndex) Write(data string) {

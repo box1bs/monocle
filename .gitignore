@@ -1,1 +1,3 @@
 crawled.txt
+pkg/rankingModel/.venv/
+pkg/rankingModel/__pycache__/

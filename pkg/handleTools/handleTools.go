@@ -22,8 +22,10 @@ type Document struct {
 	Id      	uuid.UUID
 	URL     	string
 	Description string
+	FullText 	string
 	LineCount	int
 	Score		float32
+	WordsCount	int
 }
 
 func ParseHTMLStream(htmlContent, baseURL, userAgent string, maxLinks int, onlySameOrigin bool, rules *robots_parser.RobotsTxt) (description, fullText string, links []string, lineCount int) {

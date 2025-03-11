@@ -14,7 +14,7 @@
     "worker_count" : 1000,
     "task_count" : 10000,
     "max_links_in_page" : 100,
-    "max_depth_crawl" : 6,
+    "max_depth_crawl" : 2,
     "only_same_domain" : true,
     "rate" : 500
 }

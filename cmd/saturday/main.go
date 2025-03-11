@@ -1,25 +1,28 @@
 package main
 
 import (
-	handle "github.com/box1bs/Saturday/pkg/handleTools"
-	"github.com/box1bs/Saturday/pkg/logger"
-	"github.com/box1bs/Saturday/pkg/searchIndex"
-	"github.com/box1bs/Saturday/pkg/stemmer"
-	"github.com/box1bs/Saturday/pkg/server"
+	"bufio"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+
+	handle "github.com/box1bs/Saturday/pkg/handleTools"
+	"github.com/box1bs/Saturday/pkg/logger"
+	"github.com/box1bs/Saturday/pkg/searchIndex"
+	"github.com/box1bs/Saturday/pkg/server"
+	"github.com/box1bs/Saturday/pkg/stemmer"
 )
 
 func main() {
 	var (
 		configFile = flag.String("config", "search_config.json", "Path to configuration file")
 		logFile    = flag.String("log", "crawled.txt", "Path to log file")
-		httpPort   = flag.Int("srv-port", 50051, "gRPC server port")
-		runCli     = flag.Bool("cli", false, "Run in CLI mode instead of gRPC server")
+		httpPort   = flag.Int("srv-port", 50051, "REST server port")
+		runCli     = flag.Bool("cli", false, "Run in CLI mode instead of REST server")
 	)
 	flag.Parse()
 
@@ -65,12 +68,12 @@ func runCliMode(logger *logger.AsyncLogger, configPath string) {
 	}
 
 	fmt.Println("Index built. Enter search queries (Ctrl+C to exit):")
-	
-	var query string
+
+	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Print("> ")
-		fmt.Scan(&query)
-		Present(i.Search(query))
+		query, _ := reader.ReadString('\n')
+		Present(i.Search(strings.TrimSpace(query)))
 	}
 }
 
