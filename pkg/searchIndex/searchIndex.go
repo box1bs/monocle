@@ -22,7 +22,7 @@ import (
 )
 
 type SearchIndex struct {
-	index     	map[string]map[uuid.UUID]int
+	indexRepos  *IndexRepository
 	docs      	map[uuid.UUID]*handle.Document
 	mu        	*sync.RWMutex
 	stemmer   	stemmer.Stemmer
@@ -34,9 +34,8 @@ type SearchIndex struct {
 	quitChan  	chan struct{}
 }
 
-func NewSearchIndex(Stemmer stemmer.Stemmer, l *logger.AsyncLogger, quitChan chan struct{}) *SearchIndex {
+func NewSearchIndex(Stemmer stemmer.Stemmer, l *logger.AsyncLogger, ir *IndexRepository, quitChan chan struct{}) *SearchIndex {
 	return &SearchIndex{
-		index: make(map[string]map[uuid.UUID]int),
 		docs: make(map[uuid.UUID]*handle.Document),
 		mu: new(sync.RWMutex),
 		stopWords: stemmer.NewStopWords(),
@@ -44,12 +43,15 @@ func NewSearchIndex(Stemmer stemmer.Stemmer, l *logger.AsyncLogger, quitChan cha
 		root: tree.NewNode("/"),
 		logger: l,
 		quitChan: quitChan,
+		indexRepos: ir,
 	}
 }
 
 func (idx *SearchIndex) Index(config *handle.ConfigData) error {
 	wp := workerPool.NewWorkerPool(config.WorkersCount, config.TasksCount)
     mp := new(sync.Map)
+	idx.indexRepos.LoadVisitedUrls(mp)
+	defer idx.indexRepos.SaveVisitedURLs(mp)
 	var rl *webSpider.RateLimiter
 	if config.Rate > 0 {
 		rl = webSpider.NewRateLimiter(config.Rate)
@@ -107,24 +109,45 @@ func (idx *SearchIndex) updateAVGLen() {
 func (idx *SearchIndex) Search(query string) []*handle.Document {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-
+	
 	if idx.AvgLen == 0 {
 		idx.updateAVGLen()
 	}
-
+	
 	rank := make(map[uuid.UUID]*requestRanking)
 
 	words := idx.TokenizeAndStem(query)
-	idx.fetchDocuments(words, rank)
+	index := make(map[string]map[uuid.UUID]int)
+	for _, word := range words {
+		mp, err := idx.indexRepos.GetDocumentsByWord(word)
+		if err != nil || len(mp) == 0 {
+			log.Println(err)
+			return nil
+		}
+		index[word] = mp
+		for docID := range mp {
+			if _, ok := rank[docID]; !ok {
+				rank[docID] = &requestRanking{}
+			}
+		}
+	}
+
+	idx.fetchDocuments(words, rank, index)
+	if len(rank) == 0 {
+		return nil
+	}
 	
 	result := make([]*handle.Document, 0)
 	
 	alreadyIncluded := make(map[uuid.UUID]struct{})
 	for _, word := range words {
-		idf := math.Log(float64(len(idx.docs)) / float64(len(idx.index[word]))) + 1.0
+		idf := math.Log(float64(len(idx.docs)) / float64(len(index[word]))) + 1.0
 		
-		for docID, freq := range idx.index[word] {
+		for docID, freq := range index[word] {
 			doc := idx.docs[docID]
+			if doc == nil {
+				continue
+			}
 			rank[docID].tf_idf += (float64(freq) / float64(doc.WordsCount)) * idf / float64(doc.LineCount)
 			rank[docID].bm25 += culcBM25(idf, float64(freq), idx.docs[docID], idx.AvgLen)
 
@@ -134,6 +157,10 @@ func (idx *SearchIndex) Search(query string) []*handle.Document {
 			alreadyIncluded[docID] = struct{}{}
 			result = append(result, doc)
 		}
+	}
+
+	if len(result) == 0 {
+		return nil
 	}
 
 	predicted, err := handleBinaryScore(query, result)
@@ -155,14 +182,14 @@ func (idx *SearchIndex) Search(query string) []*handle.Document {
 	return result
 }
 
-func (idx *SearchIndex) fetchDocuments(words []string, rank map[uuid.UUID]*requestRanking) {
-	result := idx.index[words[0]]
+func (idx *SearchIndex) fetchDocuments(words []string, rank map[uuid.UUID]*requestRanking, index map[string]map[uuid.UUID]int) {
+	result := index[words[0]]
 	if result == nil {
 		return
 	}
 
 	for _, word := range words[1:] {
-		docs, ex := idx.index[word]
+		docs, ex := index[word]
 		if !ex {
 			continue
 		}
@@ -203,13 +230,7 @@ func (idx *SearchIndex) AddDocument(doc *handle.Document, words []string) {
     defer idx.mu.Unlock()
 	
     idx.docs[doc.Id] = doc
-
-    for _, word := range words {
-        if idx.index[word] == nil {
-            idx.index[word] = make(map[uuid.UUID]int)
-        }
-        idx.index[word][doc.Id]++
-    }
+	idx.indexRepos.IndexDocument(doc.Id.String(), words)
 }
 
 func (idx *SearchIndex) TokenizeAndStem(text string) []string {

@@ -58,7 +58,7 @@ func NewSpider(baseURL string, maxDepth, maxLinksInPage int, mp *sync.Map, wp *w
 		maxLinksInPage: maxLinksInPage,
 		Pool:           wp,
         onlySameDomain: onlySameDomain,
-        rateLimiter: rateLimiter,
+        rateLimiter:    rateLimiter,
 	}
 }
 

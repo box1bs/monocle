@@ -15,10 +15,11 @@ import (
 )
 
 type server struct {
-	activeJobs     map[string]*jobInfo
-	jobsMutex      sync.RWMutex
-	logger         *logger.AsyncLogger
-	indexInstances map[string]*searchIndex.SearchIndex
+	activeJobs     	map[string]*jobInfo
+	jobsMutex      	sync.RWMutex
+	logger         	*logger.AsyncLogger
+	indexInstances 	map[string]*searchIndex.SearchIndex
+	indexRepos		*searchIndex.IndexRepository
 }
 
 type jobInfo struct {
@@ -28,11 +29,12 @@ type jobInfo struct {
 	stopCrawlChan chan struct{}
 }
 
-func NewSaturdayServer(logger *logger.AsyncLogger) *server {
+func NewSaturdayServer(logger *logger.AsyncLogger, ir *searchIndex.IndexRepository) *server {
 	return &server{
 		activeJobs:     make(map[string]*jobInfo),
 		logger:         logger,
 		indexInstances: make(map[string]*searchIndex.SearchIndex),
+		indexRepos: ir,
 	}
 }
 
@@ -73,7 +75,6 @@ type SearchRequest struct {
 type SearchResult struct {
 	Url         string  `json:"url"`
 	Description string  `json:"description"`
-	Score       float32 `json:"score"`
 }
 
 type SearchResponse struct {
@@ -97,7 +98,7 @@ func (s *server) startCrawlHandler(w http.ResponseWriter, r *http.Request) {
 		Rate:           req.Rate,
 	}
 	stopCrawlChan := make(chan struct{})
-	idx := searchIndex.NewSearchIndex(stemmer.NewEnglishStemmer(), s.logger, stopCrawlChan)
+	idx := searchIndex.NewSearchIndex(stemmer.NewEnglishStemmer(), s.logger, s.indexRepos, stopCrawlChan)
 	job := &jobInfo{
 		id:            jobID,
 		index:         idx,
@@ -197,7 +198,6 @@ func (s *server) searchHandler(w http.ResponseWriter, r *http.Request) {
 		responseResults = append(responseResults, SearchResult{
 			Url:         results[i].URL,
 			Description: results[i].Description,
-			Score:       results[i].Score,
 		})
 	}
 	response := SearchResponse{Results: responseResults}
@@ -205,8 +205,8 @@ func (s *server) searchHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-func StartServer(port int, logger *logger.AsyncLogger) error {
-	s := NewSaturdayServer(logger)
+func StartServer(port int, logger *logger.AsyncLogger, ir *searchIndex.IndexRepository) error {
+	s := NewSaturdayServer(logger, ir)
 	http.HandleFunc("POST /crawl/start", s.startCrawlHandler)
 	http.HandleFunc("POST /crawl/stop", s.stopCrawlHandler)
 	http.HandleFunc("GET /crawl/status", s.getCrawlStatusHandler)

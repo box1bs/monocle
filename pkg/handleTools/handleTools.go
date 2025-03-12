@@ -24,7 +24,6 @@ type Document struct {
 	Description string
 	FullText 	string
 	LineCount	int
-	Score		float32
 	WordsCount	int
 }
 

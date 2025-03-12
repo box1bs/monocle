@@ -15,6 +15,7 @@ import (
 	"github.com/box1bs/Saturday/pkg/searchIndex"
 	"github.com/box1bs/Saturday/pkg/server"
 	"github.com/box1bs/Saturday/pkg/stemmer"
+	"github.com/dgraph-io/badger/v3"
 )
 
 func main() {
@@ -32,8 +33,17 @@ func main() {
 	}
 	defer logger.File.Close()
 
+	opts := badger.DefaultOptions("/index/badger")
+	db, err := badger.Open(opts)
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	ir := searchIndex.NewIndexRepository(db)
+
 	if *runCli {
-		runCliMode(logger, *configFile)
+		runCliMode(logger, *configFile, ir)
 		return
 	}
 
@@ -42,7 +52,7 @@ func main() {
 
 	errChan := make(chan error)
 	go func() {
-		errChan <- rest.StartServer(*httpPort, logger)
+		errChan <- rest.StartServer(*httpPort, logger, ir)
 	}()
 
 	select {
@@ -56,13 +66,13 @@ func main() {
 }
 
 // Original CLI mode functionality
-func runCliMode(logger *logger.AsyncLogger, configPath string) {
+func runCliMode(logger *logger.AsyncLogger, configPath string, ir *searchIndex.IndexRepository) {
 	cfg, err := handle.UploadLocalConfiguration(configPath)
 	if err != nil {
 		panic(err)
 	}
 
-	i := searchIndex.NewSearchIndex(stemmer.NewEnglishStemmer(), logger, nil)
+	i := searchIndex.NewSearchIndex(stemmer.NewEnglishStemmer(), logger, ir, nil)
 	if err := i.Index(cfg); err != nil {
 		panic(err)
 	}
@@ -85,7 +95,7 @@ func Present(docs []*handle.Document) {
 	
 	fmt.Printf("Found %d results:\n", len(docs))
 	for i, doc := range docs {
-		fmt.Printf("%d. URL: %s\nDescription: %s\nScore: %.4f\n\n", 
-			i+1, doc.URL, doc.Description, doc.Score)
+		fmt.Printf("%d. URL: %s\nDescription: %s\n\n", 
+			i+1, doc.URL, doc.Description)
 	}
 }
