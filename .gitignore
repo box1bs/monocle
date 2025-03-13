@@ -1,3 +1,2 @@
-crawled.txt
-pkg/rankingModel/.venv/
-pkg/rankingModel/__pycache__/
+internal/app/ranking/model/__pycache__/
+internal/app/ranking/model/.venv/

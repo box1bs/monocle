@@ -2,10 +2,6 @@ package stemmer
 
 import "strings"
 
-type Stemmer interface {
-	Stem(string) string
-}
-
 type englishStemmer struct {
 	step1aRules map[string]string
 	step1bRules map[string]string
