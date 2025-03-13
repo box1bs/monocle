@@ -4,140 +4,32 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
 	"strings"
 
-	"github.com/box1bs/Saturday/pkg/robots_parser"
 	"github.com/google/uuid"
-	"golang.org/x/net/html"
 )
 
 var urlRegex = regexp.MustCompile(`^https?://`)
 
 type Document struct {
-	Id      	uuid.UUID
-	URL     	string
-	Description string
-	FullText 	string
-	LineCount	int
-	WordsCount	int
+	Id      		uuid.UUID
+	URL     		string
+	Description 	string
+	Words 			[]string
+	PartOfFullSize 	float64
 }
 
-func ParseHTMLStream(htmlContent, baseURL, userAgent string, maxLinks int, onlySameOrigin bool, rules *robots_parser.RobotsTxt) (description, fullText string, links []string, lineCount int) {
-	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
-	var metaDesc, ogDesc, firstParagraph string
-	var inParagraph, inScriptOrStyle bool
-	var fullTextBuilder strings.Builder
-	links = make([]string, 0, maxLinks)
+func (d *Document) ArchiveDocument() {
+	d.PartOfFullSize = 256.0 / float64(len(d.Words))
+	d.Words = d.Words[:256]
+}
 
-	for {
-		tokenType := tokenizer.Next()
-		if tokenType == html.ErrorToken {
-			if tokenizer.Err() == io.EOF {
-				break
-			}
-			log.Println("error parsing HTML with url: " + baseURL)
-			break
-		}
-
-		switch tokenType {
-		case html.StartTagToken:
-			t := tokenizer.Token()
-			tagName := strings.ToLower(t.Data)
-			switch tagName {
-			case "meta":
-				var isDesc, isOG bool
-				var content string
-				for _, attr := range t.Attr {
-					key := strings.ToLower(attr.Key)
-					val := attr.Val
-					if key == "name" && strings.ToLower(val) == "description" {
-						isDesc = true
-					}
-					if key == "property" && strings.ToLower(val) == "og:description" {
-						isOG = true
-					}
-					if key == "content" {
-						content = attr.Val
-					}
-				}
-				if isDesc && content != "" && metaDesc == "" {
-					metaDesc = content
-				}
-				if isOG && content != "" && ogDesc == "" {
-					ogDesc = content
-				}
-			case "p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6", "li":
-                lineCount++
-                if firstParagraph == "" && tagName == "p" {
-                    inParagraph = true
-                }
-			case "a":
-				for _, attr := range t.Attr {
-					if strings.ToLower(attr.Key) == "href" {
-						link := MakeAbsoluteURL(baseURL, attr.Val)
-						if link != "" && len(links) < maxLinks {
-							if rules != nil {
-								uri, _ := url.Parse(link)
-								if !rules.IsAllowed(userAgent, uri.Path) {
-									break
-								}
-							}
-							if onlySameOrigin {
-								same, err := isSameOrigin(link, baseURL)
-								if err != nil {
-									break
-								}
-								if same {
-									links = append(links, link)
-								}
-								break
-							}
-							links = append(links, link)
-						}
-						break
-					}
-				}
-			case "script", "style":
-				inScriptOrStyle = true
-			}
-		case html.EndTagToken:
-			t := tokenizer.Token()
-			tagName := strings.ToLower(t.Data)
-			if tagName == "p" && inParagraph {
-				inParagraph = false
-			} else if tagName == "script" || tagName == "style" {
-				inScriptOrStyle = false
-			}
-		case html.TextToken:
-			if inScriptOrStyle {
-				continue
-			}
-			text := strings.TrimSpace(string(tokenizer.Text()))
-			if text != "" {
-				lineCount += strings.Count(text, "\n")
-				
-				fullTextBuilder.WriteString(text + " ")
-				if inParagraph && firstParagraph == "" {
-					firstParagraph += text + " "
-				}
-			}
-		}
-	}
-
-	fullText = strings.TrimSpace(fullTextBuilder.String())
-	if metaDesc != "" {
-		description = metaDesc
-	} else if ogDesc != "" {
-		description = ogDesc
-	} else {
-		description = strings.TrimSpace(firstParagraph)
-	}
-	return
+func (d *Document) GetFullSize() float64 {
+	return float64(256.0 / d.PartOfFullSize)
 }
 
 func SameDomain(baseURL, href string) bool {

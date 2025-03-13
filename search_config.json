@@ -8,13 +8,12 @@
         "https://canva.com/",
         "https://cnn.com/",
         "https://pinterest.com/",
-        "https://www.ebay.com/",
-        "https://www.vk.com/"
+        "https://www.ebay.com/"
     ],
     "worker_count" : 1000,
     "task_count" : 10000,
     "max_links_in_page" : 100,
-    "max_depth_crawl" : 2,
-    "only_same_domain" : true,
+    "max_depth_crawl" : 4,
+    "only_same_domain" : false,
     "rate" : 500
 }

@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
 	handle "github.com/box1bs/Saturday/pkg/handleTools"
 )
 
 type modelRequest struct {
-	Query string	`json:"query"`
-	Docs  []string 	`json:"documents"`
+	QueryWords 	[]string	`json:"query"`
+	DocWords  	[][]string 	`json:"documents"`
 }
 
 type modelResponse struct {
@@ -24,13 +25,13 @@ type relation struct {
 	Score 	float64
 }
 
-func handleBinaryScore(query string, docs []*handle.Document) ([]relation, error) {
+func handleBinaryScore(query []string, docs []*handle.Document) ([]relation, error) {
 	cash := make(map[string]*handle.Document)
-	mr := modelRequest{Query: query, Docs: make([]string, 0, len(docs))}
+	mr := modelRequest{QueryWords: query, DocWords: make([][]string, 0, len(docs))}
 
 	for _, doc := range docs {
-		cash[doc.FullText] = doc
-		mr.Docs = append(mr.Docs, doc.FullText)
+		cash[strings.Join(doc.Words, " ")] = doc
+		mr.DocWords = append(mr.DocWords, doc.Words)
 	}
 
 	b, err := json.Marshal(mr)

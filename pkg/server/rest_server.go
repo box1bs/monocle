@@ -19,7 +19,7 @@ type server struct {
 	jobsMutex      	sync.RWMutex
 	logger         	*logger.AsyncLogger
 	indexInstances 	map[string]*searchIndex.SearchIndex
-	indexRepos		*searchIndex.IndexRepository
+	indexRepos		searchIndex.Repository
 }
 
 type jobInfo struct {
@@ -29,7 +29,7 @@ type jobInfo struct {
 	stopCrawlChan chan struct{}
 }
 
-func NewSaturdayServer(logger *logger.AsyncLogger, ir *searchIndex.IndexRepository) *server {
+func NewSaturdayServer(logger *logger.AsyncLogger, ir searchIndex.Repository) *server {
 	return &server{
 		activeJobs:     make(map[string]*jobInfo),
 		logger:         logger,
@@ -205,7 +205,7 @@ func (s *server) searchHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-func StartServer(port int, logger *logger.AsyncLogger, ir *searchIndex.IndexRepository) error {
+func StartServer(port int, logger *logger.AsyncLogger, ir searchIndex.Repository) error {
 	s := NewSaturdayServer(logger, ir)
 	http.HandleFunc("POST /crawl/start", s.startCrawlHandler)
 	http.HandleFunc("POST /crawl/stop", s.stopCrawlHandler)

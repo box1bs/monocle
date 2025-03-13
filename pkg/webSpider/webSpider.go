@@ -1,10 +1,13 @@
 package webSpider
 
 import (
+	"io"
+
 	handle "github.com/box1bs/Saturday/pkg/handleTools"
 	parser "github.com/box1bs/Saturday/pkg/robots_parser"
 	tree "github.com/box1bs/Saturday/pkg/treeIndex"
 	"github.com/box1bs/Saturday/pkg/workerPool"
+	"golang.org/x/net/html"
 
 	"bufio"
 	"context"
@@ -24,8 +27,8 @@ var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 // Indexer defines the minimal interface required by the spider.
 type Indexer interface {
     Write(string)
-    TokenizeAndStem(string) []string
-    AddDocument(*handle.Document, []string)
+    HandleDocumentWords(*handle.Document, string)
+    AddDocument(*handle.Document)
     IncUrlsCounter()
 }
 
@@ -122,18 +125,16 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, id
     idx.IncUrlsCounter()
 	idx.Write(currentURL)
 
-    description, content, links, lineCount := handle.ParseHTMLStream(doc, currentURL, userAgent, ws.maxLinksInPage, ws.onlySameDomain, parent.GetRules())
-
     document := &handle.Document{
         Id: uuid.New(),
         URL: currentURL,
-        Description: description,
-        FullText: content,
-        LineCount: lineCount,
+        Words: make([]string, 0, 256),
     }
-    words := idx.TokenizeAndStem(content)
-    document.WordsCount = len(words)
-    idx.AddDocument(document, words)
+
+    description, links := ParseHTMLStream(doc, currentURL, userAgent, ws.maxLinksInPage, ws.onlySameDomain, parent.GetRules(), document, idx.HandleDocumentWords)
+
+    document.Description = description
+    idx.AddDocument(document)
 
     for _, link := range links {
         if normalized, err := handle.NormalizeUrl(link); err == nil && !ws.isVisited(normalized) {
@@ -159,6 +160,118 @@ func (ws *webSpider) haveSitemap(url string) ([]string, error) {
     }
 
 	return urls, err
+}
+
+func ParseHTMLStream(htmlContent, baseURL, userAgent string, maxLinks int, onlySameOrigin bool, rules *parser.RobotsTxt, doc *handle.Document, f func(*handle.Document, string)) (description string, links []string) {
+	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
+	var metaDesc, ogDesc, firstParagraph string
+	var inParagraph, inScriptOrStyle bool
+	var fullTextBuilder strings.Builder
+	links = make([]string, 0, maxLinks)
+
+	for {
+		tokenType := tokenizer.Next()
+		if tokenType == html.ErrorToken {
+			if tokenizer.Err() == io.EOF {
+				break
+			}
+			log.Println("error parsing HTML with url: " + baseURL)
+			break
+		}
+
+		switch tokenType {
+		case html.StartTagToken:
+			t := tokenizer.Token()
+			tagName := strings.ToLower(t.Data)
+			switch tagName {
+			case "meta":
+				var isDesc, isOG bool
+				var content string
+				for _, attr := range t.Attr {
+					key := strings.ToLower(attr.Key)
+					val := attr.Val
+					if key == "name" && strings.ToLower(val) == "description" {
+						isDesc = true
+					}
+					if key == "property" && strings.ToLower(val) == "og:description" {
+						isOG = true
+					}
+					if key == "content" {
+						content = attr.Val
+					}
+				}
+				if isDesc && content != "" && metaDesc == "" {
+					metaDesc = content
+				}
+				if isOG && content != "" && ogDesc == "" {
+					ogDesc = content
+				}
+			case "p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6", "li":
+                if firstParagraph == "" && tagName == "p" {
+                    inParagraph = true
+                }
+			case "a":
+				for _, attr := range t.Attr {
+					if strings.ToLower(attr.Key) == "href" {
+						link := handle.MakeAbsoluteURL(baseURL, attr.Val)
+						if link != "" && len(links) < maxLinks {
+							if rules != nil {
+								uri, err := url.Parse(link)
+								if err != nil {
+									break
+								}
+								if !rules.IsAllowed(userAgent, uri.Path) {
+									break
+								}
+							}
+							if onlySameOrigin {
+								same := handle.SameDomain(link, baseURL)
+								if same {
+									links = append(links, link)
+								}
+								break
+							}
+							links = append(links, link)
+						}
+						break
+					}
+				}
+			case "script", "style":
+				inScriptOrStyle = true
+			}
+		case html.EndTagToken:
+			t := tokenizer.Token()
+			tagName := strings.ToLower(t.Data)
+			if tagName == "p" && inParagraph {
+				inParagraph = false
+			} else if tagName == "script" || tagName == "style" {
+				inScriptOrStyle = false
+			}
+		case html.TextToken:
+			if inScriptOrStyle {
+				continue
+			}
+			text := strings.TrimSpace(string(tokenizer.Text()))
+			if text != "" {
+				fullTextBuilder.WriteString(text + " ")
+				if inParagraph && firstParagraph == "" {
+					firstParagraph += text + " "
+				}
+			}
+		}
+	}
+
+	fullText := strings.TrimSpace(fullTextBuilder.String())
+    f(doc, fullText)
+    
+	if metaDesc != "" {
+		description = metaDesc
+	} else if ogDesc != "" {
+		description = ogDesc
+	} else {
+		description = strings.TrimSpace(firstParagraph)
+	}
+	return
 }
 
 func (ws *webSpider) ProcessSitemap(baseURL, sitemapURL string) ([]string, error) {

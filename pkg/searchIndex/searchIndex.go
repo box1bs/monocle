@@ -22,8 +22,7 @@ import (
 )
 
 type SearchIndex struct {
-	indexRepos  *IndexRepository
-	docs      	map[uuid.UUID]*handle.Document
+	indexRepos  Repository
 	mu        	*sync.RWMutex
 	stemmer   	stemmer.Stemmer
 	stopWords 	*stemmer.StopWords
@@ -34,9 +33,19 @@ type SearchIndex struct {
 	quitChan  	chan struct{}
 }
 
-func NewSearchIndex(Stemmer stemmer.Stemmer, l *logger.AsyncLogger, ir *IndexRepository, quitChan chan struct{}) *SearchIndex {
+type Repository interface {
+	LoadVisitedUrls(*sync.Map) error
+	SaveVisitedURLs(*sync.Map) error
+	IndexDocument(string, []string) error
+	GetDocumentsByWord(string) (map[uuid.UUID]int, error)
+	SaveDocument(*handle.Document) error
+	GetDocumentByID(uuid.UUID) (*handle.Document, error)
+	GetAllDocuments() ([]*handle.Document, error)
+	GetDocumentsCount() (int, error)
+}
+
+func NewSearchIndex(Stemmer stemmer.Stemmer, l *logger.AsyncLogger, ir Repository, quitChan chan struct{}) *SearchIndex {
 	return &SearchIndex{
-		docs: make(map[uuid.UUID]*handle.Document),
 		mu: new(sync.RWMutex),
 		stopWords: stemmer.NewStopWords(),
 		stemmer: Stemmer,
@@ -99,11 +108,16 @@ func (idx *SearchIndex) updateAVGLen() {
 	defer idx.mu.RUnlock()
 
 	var wordCount int
-	for _, doc := range idx.docs {
-		wordCount += doc.WordsCount
+	docs, err := idx.indexRepos.GetAllDocuments()
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	for _, doc := range docs {
+		wordCount += int(doc.GetFullSize())
 	}
 
-	idx.AvgLen = float64(wordCount) / float64(len(idx.docs))
+	idx.AvgLen = float64(wordCount) / float64(len(docs))
 }
 
 func (idx *SearchIndex) Search(query string) []*handle.Document {
@@ -141,15 +155,25 @@ func (idx *SearchIndex) Search(query string) []*handle.Document {
 	
 	alreadyIncluded := make(map[uuid.UUID]struct{})
 	for _, word := range words {
-		idf := math.Log(float64(len(idx.docs)) / float64(len(index[word]))) + 1.0
+		lenght, err := idx.indexRepos.GetDocumentsCount()
+		if err != nil {
+			log.Println(err)
+			return nil
+		}
+		idf := math.Log(float64(lenght) / float64(len(index[word]))) + 1.0
 		
 		for docID, freq := range index[word] {
-			doc := idx.docs[docID]
+			doc, err := idx.indexRepos.GetDocumentByID(docID)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
 			if doc == nil {
 				continue
 			}
-			rank[docID].tf_idf += (float64(freq) / float64(doc.WordsCount)) * idf / float64(doc.LineCount)
-			rank[docID].bm25 += culcBM25(idf, float64(freq), idx.docs[docID], idx.AvgLen)
+			
+			rank[docID].tf_idf += float64(freq) / doc.GetFullSize() * (idf - 1) / float64(len(doc.Words))
+			rank[docID].bm25 += culcBM25(idf, float64(freq), doc, idx.AvgLen)
 
 			if _, ok := alreadyIncluded[docID]; ok {
 				continue
@@ -163,7 +187,7 @@ func (idx *SearchIndex) Search(query string) []*handle.Document {
 		return nil
 	}
 
-	predicted, err := handleBinaryScore(query, result)
+	predicted, err := handleBinaryScore(words, result)
 	if err != nil {
 		log.Println(err)
 		return nil
@@ -214,7 +238,7 @@ func intersect(a, b map[uuid.UUID]int, rank map[uuid.UUID]*requestRanking) map[u
 func culcBM25(idf float64, tf float64, doc *handle.Document, avgLen float64) float64 {
 	k1 := 1.2
 	b := 0.75
-	return idf * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * float64(doc.WordsCount) / avgLen))
+	return idf * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * doc.GetFullSize() / avgLen))
 }
 
 func (idx *SearchIndex) Write(data string) {
@@ -225,12 +249,12 @@ func (idx *SearchIndex) IncUrlsCounter() {
 	atomic.AddInt32(&idx.UrlsCrawled, 1)
 }
 
-func (idx *SearchIndex) AddDocument(doc *handle.Document, words []string) {
+func (idx *SearchIndex) AddDocument(doc *handle.Document) {
     idx.mu.Lock()
     defer idx.mu.Unlock()
 	
-    idx.docs[doc.Id] = doc
-	idx.indexRepos.IndexDocument(doc.Id.String(), words)
+	idx.indexRepos.SaveDocument(doc)
+	idx.indexRepos.IndexDocument(doc.Id.String(), doc.Words)
 }
 
 func (idx *SearchIndex) TokenizeAndStem(text string) []string {
@@ -261,4 +285,12 @@ func (idx *SearchIndex) TokenizeAndStem(text string) []string {
     }
     
     return tokens
+}
+
+func (idx *SearchIndex) HandleDocumentWords(doc *handle.Document, text string) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	
+	doc.Words = append(doc.Words, idx.TokenizeAndStem(text)...)
+	doc.ArchiveDocument()
 }

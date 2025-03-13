@@ -13,6 +13,7 @@ import (
 	handle "github.com/box1bs/Saturday/pkg/handleTools"
 	"github.com/box1bs/Saturday/pkg/logger"
 	"github.com/box1bs/Saturday/pkg/searchIndex"
+	"github.com/box1bs/Saturday/pkg/searchIndex/indexRepository"
 	"github.com/box1bs/Saturday/pkg/server"
 	"github.com/box1bs/Saturday/pkg/stemmer"
 	"github.com/dgraph-io/badger/v3"
@@ -40,7 +41,7 @@ func main() {
 	}
 	defer db.Close()
 
-	ir := searchIndex.NewIndexRepository(db)
+	ir := indexRepository.NewIndexRepository(db)
 
 	if *runCli {
 		runCliMode(logger, *configFile, ir)
@@ -66,7 +67,7 @@ func main() {
 }
 
 // Original CLI mode functionality
-func runCliMode(logger *logger.AsyncLogger, configPath string, ir *searchIndex.IndexRepository) {
+func runCliMode(logger *logger.AsyncLogger, configPath string, ir searchIndex.Repository) {
 	cfg, err := handle.UploadLocalConfiguration(configPath)
 	if err != nil {
 		panic(err)
