@@ -8,9 +8,10 @@ import (
 	"sync"
 
 	"github.com/box1bs/Saturday/configs"
-	"github.com/box1bs/Saturday/internal/model"
-	"github.com/box1bs/Saturday/pkg/stemmer"
 	"github.com/box1bs/Saturday/internal/app/index"
+	"github.com/box1bs/Saturday/internal/model"
+	"github.com/box1bs/Saturday/internal/view"
+	"github.com/box1bs/Saturday/pkg/stemmer"
 	"github.com/google/uuid"
 )
 
@@ -212,6 +213,7 @@ func StartServer(port int, logger model.Logger, ir model.Repository) error {
 	http.HandleFunc("GET /crawl/status", s.getCrawlStatusHandler)
 	http.HandleFunc("POST /search", s.searchHandler)
 	addr := fmt.Sprintf(":%d", port)
-	log.Printf("REST API started at %d", port)
+	view.PrintLogo()
+	log.Printf("REST API started at %d\n", port)
 	return http.ListenAndServe(addr, nil)
 }
