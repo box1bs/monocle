@@ -1,6 +1,5 @@
-![Saturday Logo](./internal/assets/image.png)
-
 # Saturday - Search Robot and Search Engine
+![Saturday Logo](./internal/assets/image.png)
 
 ## Project Overview
 
