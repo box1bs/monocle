@@ -2,8 +2,10 @@ package web
 
 import (
 	"encoding/xml"
+	"errors"
 	"io"
 	"regexp"
+	"unicode"
 
 	"github.com/box1bs/Saturday/internal/app/index/tree"
 	"github.com/box1bs/Saturday/internal/model"
@@ -60,11 +62,13 @@ func NewSpider(baseURL string, maxDepth, maxLinksInPage int, mp *sync.Map, wp *w
 	}
 }
 
-func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, idx model.Indexer, parent *tree.TreeNode, depth int) {
+func (ws *webSpider) CrawlWithContext(ctx context.Context, canc context.CancelFunc, currentURL string, idx model.Indexer, parent *tree.TreeNode, depth int) {
+	defer canc()
     select {
-    case <-ctx.Done():
-        return
-    default:
+	case <-ctx.Done():
+		//log.Println("task time exided")
+		return
+	default:
     }
 
     if depth >= ws.maxD {
@@ -73,7 +77,7 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, id
     
     normalized, err := normalizeUrl(currentURL)
     if err != nil {
-        log.Printf("Error normalizing URL %s: %v\n", currentURL, err)
+    	log.Printf("Error normalizing URL %s: %v\n", currentURL, err)
         return
     }
     
@@ -81,21 +85,30 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, id
         return
     }
     
-    log.Println("Parsing: " + currentURL)
+    //log.Println("Parsing: " + currentURL)
 
-    if rules, err := parser.FetchRobotsTxt(currentURL); rules != "" && err == nil {
+    if rules, err := parser.FetchRobotsTxt(ctx, currentURL, ws.client); rules != "" && err == nil {
         robotsTXT := parser.ParseRobotsTxt(rules)
         parent.SetRules(robotsTXT)
     } else if parent.GetRules() == nil {
-        uri, _ := url.Parse(currentURL)
-        if rules, _ = parser.FetchRobotsTxt(uri.Scheme + "://" + uri.Host + "/"); rules != "" {
-            robotsTXT := parser.ParseRobotsTxt(rules)
-            parent.SetRules(robotsTXT)
-        }
+        uri, err := url.Parse(currentURL)
+		if err != nil {
+			return
+		}
+		if rules, err = parser.FetchRobotsTxt(ctx, uri.Scheme + "://" + uri.Host + "/", ws.client); rules != "" && err == nil {
+			robotsTXT := parser.ParseRobotsTxt(rules)
+			parent.SetRules(robotsTXT)
+		}
     }
     
     if urls, err := ws.haveSitemap(currentURL); urls != nil && err == nil {
         for _, link := range urls {
+			select {
+			case <-ctx.Done():
+				//log.Println("task time exceeded")
+				return
+			default:
+			}
             if normalized, err := normalizeUrl(link); err == nil && !ws.isVisited(normalized) {
                 child := tree.NewNode(link)
                 parent.AddChild(child)
@@ -106,8 +119,9 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, id
                 if ws.onlySameDomain || same {
                     child.SetRules(parent.GetRules())
                 }
-                go ws.Pool.Submit(func() {
-                    ws.CrawlWithContext(ctx, link, idx, child, depth+1)
+				c, cancel := context.WithTimeout(idx.GetContext(), 90 * time.Second)
+                ws.Pool.Submit(func() {
+                    ws.CrawlWithContext(c, cancel, link, idx, child, depth+1)
                 })
             }
         }
@@ -115,9 +129,9 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, id
 
     ws.rateLimiter.maybeGetToken()
     
-    doc, err := ws.getHTML(currentURL)
+    doc, err := ws.getHTML(ctx, currentURL)
     if err != nil || doc == "" {
-		log.Printf("error parsing page: %s\n", currentURL)
+		//log.Printf("error parsing page: %s\n", currentURL)
         return
     }
     
@@ -130,12 +144,20 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, id
         Words: make([]string, 0, 256),
     }
 
-    description, links := parseHTMLStream(doc, currentURL, userAgent, ws.maxLinksInPage, ws.onlySameDomain, parent.GetRules(), document, idx.HandleDocumentWords)
+	var links []string
+	c, cancel := context.WithTimeout(ctx, time.Second * 15)
+	defer cancel()
+    document.Description, links = parseHTMLStream(c, doc, currentURL, userAgent, ws.maxLinksInPage, ws.onlySameDomain, parent.GetRules(), document, idx.HandleDocumentWords)
 
-    document.Description = description
     idx.AddDocument(document)
 
     for _, link := range links {
+		select {
+		case <-ctx.Done():
+			//log.Println("task time exided")
+			return
+		default:
+		}
         if normalized, err := normalizeUrl(link); err == nil && !ws.isVisited(normalized) {
             child := tree.NewNode(link)
             parent.AddChild(child)
@@ -146,23 +168,46 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, currentURL string, id
             if ws.onlySameDomain || same {
                 child.SetRules(parent.GetRules())
             }
-            go ws.Pool.Submit(func() {
-                ws.CrawlWithContext(ctx, link, idx, child, depth+1)
+            c, cancel := context.WithTimeout(idx.GetContext(), 90 * time.Second)
+            ws.Pool.Submit(func() {
+                ws.CrawlWithContext(c, cancel, link, idx, child, depth+1)
             })
         }
     }
 }
 
-func makeAbsoluteURL(baseURL, href string) string {
-    if strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") {
-        return href
-    }
-    
-    if strings.HasPrefix(href, "/") {
-        return baseURL + href
-    }
-    
-    return ""
+func makeAbsoluteURL(rawURL, baseURL string) (string, error) {
+	if rawURL == "" {
+		return "", errors.New("empty url")
+	}
+
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+
+	if u.IsAbs() {
+		return u.String(), nil
+	}
+
+	if u.Host == "" && !strings.HasPrefix(rawURL, "/") && !strings.HasPrefix(rawURL, "./") && !strings.HasPrefix(rawURL, "../") {
+		u2, err := url.Parse("https://" + rawURL)
+		if err == nil && u2.Host != "" {
+			return u2.String(), nil
+		}
+	}
+
+	if u.Host != "" && u.Scheme == "" {
+		u.Scheme = "https"
+		return u.String(), nil
+	}
+
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return "", err
+	}
+	resolved := base.ResolveReference(u)
+	return resolved.String(), nil
 }
 
 func (ws *webSpider) haveSitemap(url string) ([]string, error) {
@@ -178,18 +223,24 @@ func (ws *webSpider) haveSitemap(url string) ([]string, error) {
 }
 
 func normalizeUrl(rawUrl string) (string, error) {
-    uri := urlRegex.ReplaceAllString(rawUrl, "")
+    cleanUrl := strings.Map(func(r rune) rune {
+        if unicode.IsSpace(r) || unicode.IsControl(r) {
+            return -1
+        }
+        return r
+    }, rawUrl)
+    
+    uri := urlRegex.ReplaceAllString(cleanUrl, "")
     
     parsedUrl, err := url.Parse(uri)
     if err != nil {
         return "", err
     }
 
-	parsedUrl = cleanUTMParams(parsedUrl)
-	parsedUrl.Host = strings.TrimPrefix(parsedUrl.Host, "www.")
+    parsedUrl = cleanUTMParams(parsedUrl)
+    parsedUrl.Host = strings.TrimPrefix(parsedUrl.Host, "www.")
     
     var normalized strings.Builder
-    normalized.Grow(len(parsedUrl.Host) + len(parsedUrl.Path))
     normalized.WriteString(strings.ToLower(parsedUrl.Host))
     normalized.WriteString(strings.ToLower(parsedUrl.Path))
     
@@ -208,14 +259,36 @@ func cleanUTMParams(rawURL *url.URL) *url.URL {
 	return rawURL
 }
 
-func parseHTMLStream(htmlContent, baseURL, userAgent string, maxLinks int, onlySameOrigin bool, rules *parser.RobotsTxt, doc *model.Document, f func(*model.Document, string)) (description string, links []string) {
+func parseHTMLStream(ctx context.Context, htmlContent, baseURL, userAgent string, maxLinks int, onlySameOrigin bool, rules *parser.RobotsTxt, doc *model.Document, f func(*model.Document, string)) (description string, links []string) {
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
 	var metaDesc, ogDesc, firstParagraph string
 	var inParagraph, inScriptOrStyle bool
 	var fullTextBuilder strings.Builder
 	links = make([]string, 0, maxLinks)
 
+	tokenCount := 0
+    const checkContextEvery = 20
+
 	for {
+		tokenCount++
+		if tokenCount % checkContextEvery == 0 {
+			select {
+			case <-ctx.Done():
+				fullText := strings.TrimSpace(fullTextBuilder.String())
+				f(doc, fullText)
+				
+				if metaDesc != "" {
+					description = metaDesc
+				} else if ogDesc != "" {
+					description = ogDesc
+				} else {
+					description = strings.TrimSpace(firstParagraph)
+				}
+				return
+			default:
+			}
+		}
+
 		tokenType := tokenizer.Next()
 		if tokenType == html.ErrorToken {
 			if tokenizer.Err() == io.EOF {
@@ -259,7 +332,10 @@ func parseHTMLStream(htmlContent, baseURL, userAgent string, maxLinks int, onlyS
 			case "a":
 				for _, attr := range t.Attr {
 					if strings.ToLower(attr.Key) == "href" {
-						link := makeAbsoluteURL(baseURL, attr.Val)
+						link, err := makeAbsoluteURL(attr.Val, baseURL)
+						if err != nil {
+							break
+						}
 						if link != "" && len(links) < maxLinks {
 							if rules != nil {
 								uri, err := url.Parse(link)
@@ -331,8 +407,8 @@ func (ws *webSpider) processSitemap(baseURL, sitemapURL string) ([]string, error
 
     var nextUrls []string
 	for _, url := range urls {
-		abs := makeAbsoluteURL(baseURL, url)
-		if abs == "" {
+		abs, err := makeAbsoluteURL(url, baseURL)
+		if abs == "" || err != nil {
 			continue
 		}
 		nextUrls = append(nextUrls, abs)
@@ -385,9 +461,9 @@ func isSameOrigin(rawURL, baseURL string) (bool, error) {
 		return false, err
 	}
 
-	parsedBaseURL, _ := url.Parse(baseURL)
-	if !strings.Contains(parsedBaseURL.Hostname(), parsedURL.Hostname()) {
-		return false, nil
+	parsedBaseURL, err := url.Parse(baseURL)
+	if err != nil || !strings.Contains(parsedBaseURL.Hostname(), parsedURL.Hostname()) {
+		return false, err
 	}
 	return true, nil
 }
@@ -397,8 +473,8 @@ func (ws *webSpider) isVisited(URL string) bool {
     return exists
 }
 
-func (ws *webSpider) getHTML(URL string) (string, error) {
-    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func (ws *webSpider) getHTML(ctx context.Context, URL string) (string, error) {
+    ctx, cancel := context.WithTimeout(ctx, 25 * time.Second)
     defer cancel()
 
     req, err := http.NewRequestWithContext(ctx, "GET", URL, nil)
@@ -424,16 +500,46 @@ func (ws *webSpider) getHTML(URL string) (string, error) {
         return "", fmt.Errorf("unsupported content type: %s", ctype)
     }
 
-    var builder strings.Builder
-    scanner := bufio.NewScanner(resp.Body)
-    scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
+	resultCh := make(chan struct {
+        content string
+        err     error
+    }, 1)
 
-    for scanner.Scan() {
-        builder.WriteString(scanner.Text())
-    }
-    if err := scanner.Err(); err != nil {
-        return "", err
-    }
+	go func() {
+        var builder strings.Builder
+        scanner := bufio.NewScanner(resp.Body)
+        scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
 
-    return builder.String(), nil
+        for scanner.Scan() {
+            builder.WriteString(scanner.Text())
+            
+            select {
+            case <-ctx.Done():
+                resultCh <- struct {
+                    content string
+                    err     error
+                }{
+                    content: "",
+                    err:     ctx.Err(),
+                }
+                return
+            default:
+            }
+        }
+
+        resultCh <- struct {
+            content string
+            err     error
+        }{
+            content: builder.String(),
+            err:     scanner.Err(),
+        }
+    }()
+
+    select {
+    case result := <-resultCh:
+        return result.content, result.err
+    case <-ctx.Done():
+        return "", ctx.Err()
+    }
 }

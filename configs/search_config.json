@@ -1,19 +1,22 @@
 {
     "base_urls" : [
         "https://www.google.com/",
+        "https://news.mit.edu/topic/programming",
+        "https://www.stanford.edu/",
         "https://www.wikipedia.org/",
         "https://www.reddit.com/",
         "https://stackoverflow.com/questions/",
         "https://www.amazon.com/",
-        "https://canva.com/",
         "https://cnn.com/",
-        "https://pinterest.com/",
-        "https://www.ebay.com/"
+        "https://www.ebay.com/",
+        "https://go.dev/",
+        "https://www.geeksforgeeks.org/what-is-information-retrieval/",
+        "http://ibm.com/think/topics/information-retrieval"
     ],
     "worker_count" : 1000,
-    "task_count" : 10000,
-    "max_links_in_page" : 100,
-    "max_depth_crawl" : 4,
+    "task_count" : 100000,
+    "max_links_in_page" : 30,
+    "max_depth_crawl" : 7,
     "only_same_domain" : false,
-    "rate" : 500
+    "rate" : 1000
 }

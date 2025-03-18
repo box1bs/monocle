@@ -39,7 +39,7 @@ func handleBinaryScore(query []string, docs []*model.Document) ([]relation, erro
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", "http://0.0.0.0:8080/predict", bytes.NewBuffer(b))
+	req, err := http.NewRequest("POST", "http://0.0.0.0:8000/predict", bytes.NewBuffer(b))
 	if err != nil {
 		return nil, err
 	}

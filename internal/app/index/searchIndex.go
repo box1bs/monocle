@@ -12,9 +12,9 @@ import (
 	"unicode"
 
 	"github.com/box1bs/Saturday/configs"
+	"github.com/box1bs/Saturday/internal/app/index/tree"
 	"github.com/box1bs/Saturday/internal/app/web"
 	"github.com/box1bs/Saturday/internal/model"
-	"github.com/box1bs/Saturday/internal/app/index/tree"
 	"github.com/box1bs/Saturday/pkg/workerPool"
 	"github.com/google/uuid"
 )
@@ -28,17 +28,17 @@ type SearchIndex struct {
 	root 		*tree.TreeNode
 	UrlsCrawled int32
 	AvgLen	 	float64
-	quitChan  	chan struct{}
+	quitCTX		context.Context
 }
 
-func NewSearchIndex(stemmer model.Stemmer, stopWords model.StopWords, l model.Logger, ir model.Repository, quitChan chan struct{}) *SearchIndex {
+func NewSearchIndex(stemmer model.Stemmer, stopWords model.StopWords, l model.Logger, ir model.Repository, context context.Context) *SearchIndex {
 	return &SearchIndex{
 		mu: new(sync.RWMutex),
 		stopWords: stopWords,
 		stemmer: stemmer,
 		root: tree.NewNode("/"),
 		logger: l,
-		quitChan: quitChan,
+		quitCTX: context,
 		indexRepos: ir,
 	}
 }
@@ -49,35 +49,21 @@ func (idx *SearchIndex) Index(config *configs.ConfigData) error {
 	idx.indexRepos.LoadVisitedUrls(mp)
 	defer idx.indexRepos.SaveVisitedUrls(mp)
 	var rl *web.RateLimiter
-	if config.Rate > 0 {
-		rl = web.NewRateLimiter(config.Rate)
-		defer rl.Shutdown()
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), 90 * time.Second)
+	defer cancel()
     for _, url := range config.BaseURLs {
+		if config.Rate > 0 {
+			rl = web.NewRateLimiter(config.Rate)
+			defer rl.Shutdown()
+		}
 		node := tree.NewNode(url)
 		idx.root.AddChild(node)
         spider := web.NewSpider(url, config.MaxDepth, config.MaxLinksInPage, mp, wp, config.OnlySameDomain, rl)
         spider.Pool.Submit(func() {
-            spider.CrawlWithContext(ctx, url, idx, node, 0)
+            spider.CrawlWithContext(ctx, cancel, url, idx, node, 0)
         })
     }
-	go func() {
-		for {
-			select {
-			case <-done:
-				return
-			case <-idx.quitChan:
-				cancel()
-				return
-			default:
-				time.Sleep(time.Millisecond * 500)
-			}
-		}
-	}()
 	wp.Wait()
-	done <- struct{}{}
 	wp.Stop()
     return nil
 }
@@ -121,7 +107,7 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 	index := make(map[string]map[uuid.UUID]int)
 	for _, word := range words {
 		mp, err := idx.indexRepos.GetDocumentsByWord(word)
-		if err != nil || len(mp) == 0 {
+		if err != nil {
 			log.Println(err)
 			return nil
 		}
@@ -138,8 +124,7 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 		return nil
 	}
 	
-	result := make([]*model.Document, 0)
-	
+	result := make([]*model.Document, 0, 50)
 	alreadyIncluded := make(map[uuid.UUID]struct{})
 	for _, word := range words {
 		lenght, err := idx.indexRepos.GetDocumentsCount()
@@ -159,10 +144,10 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 				continue
 			}
 			
-			rank[docID].tf_idf += float64(freq) / doc.GetFullSize() * (idf - 1) / float64(len(doc.Words))
+			rank[docID].tf_idf += float64(freq) / doc.GetFullSize() * (idf - 1.0)
 			rank[docID].bm25 += culcBM25(idf, float64(freq), doc, idx.AvgLen)
 
-			if _, ok := alreadyIncluded[docID]; ok {
+			if _, ex := alreadyIncluded[docID]; ex {
 				continue
 			}
 			alreadyIncluded[docID] = struct{}{}
@@ -170,9 +155,11 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 		}
 	}
 
-	if len(result) == 0 {
+	lenght := len(result)
+	if lenght == 0 {
 		return nil
 	}
+	cap := min(lenght, 50)
 
 	predicted, err := handleBinaryScore(words, result)
 	if err != nil {
@@ -185,41 +172,23 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 	}
 
 	sort.Slice(result, func(i, j int) bool {
-		return rank[result[i].Id].relation > rank[result[j].Id].relation || rank[result[i].Id].includesWords > rank[result[j].Id].includesWords || 
-		(rank[result[i].Id].relation == rank[result[j].Id].relation && rank[result[i].Id].includesWords == rank[result[j].Id].includesWords) && 
+		return rank[result[i].Id].includesWords > rank[result[j].Id].includesWords || rank[result[i].Id].relation > rank[result[j].Id].relation || 
+		rank[result[i].Id].relation == rank[result[j].Id].relation && rank[result[i].Id].includesWords == rank[result[j].Id].includesWords && 
 		(rank[result[i].Id].bm25 > rank[result[j].Id].bm25 || rank[result[i].Id].tf_idf > rank[result[j].Id].tf_idf)
 	})
 
-	return result
+	return result[:cap]
 }
 
 func (idx *SearchIndex) fetchDocuments(words []string, rank map[uuid.UUID]*requestRanking, index map[string]map[uuid.UUID]int) {
-	result := index[words[0]]
-	if result == nil {
-		return
-	}
-
-	for _, word := range words[1:] {
-		docs, ex := index[word]
-		if !ex {
+	for _, word := range words {
+		if _, ex := index[word]; !ex {
 			continue
 		}
-		result = intersect(result, docs, rank)
-		if len(result) == 0 {
-			return
+		for id := range index[word] {
+			rank[id].includesWords++
 		}
 	}
-}
-
-func intersect(a, b map[uuid.UUID]int, rank map[uuid.UUID]*requestRanking) map[uuid.UUID]int {
-    result := make(map[uuid.UUID]int)
-    for key := range a {
-        if v, exists := b[key]; exists {
-			rank[key].includesWords++
-            result[key] = a[key] + v
-        }
-    }
-    return result
 }
 
 func culcBM25(idf float64, tf float64, doc *model.Document, avgLen float64) float64 {
@@ -280,4 +249,8 @@ func (idx *SearchIndex) HandleDocumentWords(doc *model.Document, text string) {
 	
 	doc.Words = append(doc.Words, idx.TokenizeAndStem(text)...)
 	doc.ArchiveDocument()
+}
+
+func (idx *SearchIndex) GetContext() context.Context {
+	return idx.quitCTX
 }

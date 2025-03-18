@@ -1,0 +1,17 @@
+version: '3.8'
+services:
+  saturday:
+    build:
+      context: ./
+      dockerfile: dockerfile
+
+    ports:
+      - "50051:50051"
+
+  pyserver:
+    build:
+      context: ./internal/ranking/model/
+      dockerfile: dockerfile
+    
+    ports:
+      - "8000:8000"

@@ -1,6 +1,7 @@
 package srv
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -24,10 +25,10 @@ type server struct {
 }
 
 type jobInfo struct {
-	id            string
-	index         *searchIndex.SearchIndex
-	status        string
-	stopCrawlChan chan struct{}
+	id            	string
+	index         	*searchIndex.SearchIndex
+	status        	string
+	cancel 			context.CancelFunc
 }
 
 func NewSaturdayServer(logger model.Logger, ir model.Repository) *server {
@@ -98,13 +99,13 @@ func (s *server) startCrawlHandler(w http.ResponseWriter, r *http.Request) {
 		OnlySameDomain: req.OnlySameDomain,
 		Rate:           req.Rate,
 	}
-	stopCrawlChan := make(chan struct{})
-	idx := searchIndex.NewSearchIndex(stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), s.logger, s.indexRepos, stopCrawlChan)
+	ctx, cancel := context.WithCancel(context.Background())
+	idx := searchIndex.NewSearchIndex(stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), s.logger, s.indexRepos, ctx)
 	job := &jobInfo{
-		id:            jobID,
-		index:         idx,
-		status:        "initializing",
-		stopCrawlChan: stopCrawlChan,
+		id:            	jobID,
+		index:         	idx,
+		status:        	"initializing",
+		cancel: 		cancel,
 	}
 
 	s.jobsMutex.Lock()
@@ -148,7 +149,7 @@ func (s *server) stopCrawlHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job.stopCrawlChan <- struct{}{}
+	job.cancel()
 	s.jobsMutex.Lock()
 	job.status = "stopping"
 	s.jobsMutex.Unlock()

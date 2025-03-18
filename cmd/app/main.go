@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -74,12 +75,14 @@ func runCliMode(logger *logger.AsyncLogger, configPath string, ir model.Reposito
 		panic(err)
 	}
 
-	i := searchIndex.NewSearchIndex(stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), logger, ir, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	i := searchIndex.NewSearchIndex(stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), logger, ir, ctx)
 	if err := i.Index(cfg); err != nil {
 		panic(err)
 	}
 
-	fmt.Println("Index built. Enter search queries (Ctrl+C to exit):")
+	fmt.Printf("Index built with %d urls. Enter search queries (Ctrl+C to exit):\n", i.UrlsCrawled)
 
 	reader := bufio.NewReader(os.Stdin)
 	for {

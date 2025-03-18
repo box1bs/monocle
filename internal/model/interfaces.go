@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"sync"
 
 	"github.com/google/uuid"
@@ -12,6 +13,7 @@ type Indexer interface {
     HandleDocumentWords(*Document, string)
     AddDocument(*Document)
     IncUrlsCounter()
+	GetContext() context.Context
 }
 
 type Logger interface {

@@ -1,10 +1,12 @@
 package parser
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type Rule struct {
@@ -91,8 +93,15 @@ func (r *RobotsTxt) IsAllowed(userAgent, url string) bool {
     return true
 }
 
-func FetchRobotsTxt(url string) (string, error) {
-    resp, err := http.Get(url + "/robots.txt")
+func FetchRobotsTxt(ctx context.Context, url string, cli *http.Client) (string, error) {
+    c, cancel := context.WithTimeout(ctx, time.Second * 15)
+    defer cancel()
+    req, err := http.NewRequestWithContext(c, "GET", url + "/robots.txt", nil)
+    if err != nil {
+        return "", err
+    }
+
+    resp, err := cli.Do(req)
     if err != nil {
         return "", err
     }

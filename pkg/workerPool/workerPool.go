@@ -1,6 +1,7 @@
 package workerPool
 
 import (
+	"log"
 	"sync"
 	"sync/atomic"
 )
@@ -15,7 +16,7 @@ type WorkerPool struct {
 
 func NewWorkerPool(size int, queueCapacity int) *WorkerPool {
 	wp := &WorkerPool{
-		tasks:     make(chan func(), size*2),
+		tasks:     make(chan func(), size*5),
 		taskQueue: make(chan func(), queueCapacity),
 		wg:        new(sync.WaitGroup),
 		quit:      make(chan struct{}),
@@ -38,9 +39,10 @@ func NewWorkerPool(size int, queueCapacity int) *WorkerPool {
 
 func (wp *WorkerPool) Submit(task func()) {
 	wp.wg.Add(1)
+	log.Printf("Submitting task. Queue: %d, Tasks: %d, Workers: %d", len(wp.taskQueue), len(wp.tasks), wp.workers)
 	wp.taskQueue <- func() {
-		defer wp.wg.Done()
 		task()
+		wp.wg.Done()
 	}
 }
 
