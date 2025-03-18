@@ -161,14 +161,8 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 	}
 	cap := min(lenght, 50)
 
-	predicted, err := handleBinaryScore(words, result)
-	if err != nil {
-		log.Println(err)
+	if err := handleBinaryScore(words, result, rank); err != nil {
 		return nil
-	}
-
-	for _, rel := range predicted {
-		rank[rel.Doc.Id].relation = rel.Score
 	}
 
 	sort.Slice(result, func(i, j int) bool {
