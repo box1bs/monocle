@@ -1,4 +1,4 @@
-package searchIndex
+package index
 
 import (
 	"context"
@@ -103,8 +103,11 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 	
 	rank := make(map[uuid.UUID]*requestRanking)
 
-	words := idx.TokenizeAndStem(query)
-	index := make(map[string]map[uuid.UUID]int)
+	words, err := idx.indexRepos.TransferOrSaveToSequence(idx.TokenizeAndStem(query))
+	if err != nil {
+		return nil
+	}
+	index := make(map[int]map[uuid.UUID]int)
 	for _, word := range words {
 		mp, err := idx.indexRepos.GetDocumentsByWord(word)
 		if err != nil {
@@ -118,13 +121,8 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 			}
 		}
 	}
-
-	idx.fetchDocuments(words, rank, index)
-	if len(rank) == 0 {
-		return nil
-	}
 	
-	result := make([]*model.Document, 0, 50)
+	result := make([]*model.Document, 0)
 	alreadyIncluded := make(map[uuid.UUID]struct{})
 	for _, word := range words {
 		lenght, err := idx.indexRepos.GetDocumentsCount()
@@ -143,7 +141,8 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 			if doc == nil {
 				continue
 			}
-			
+
+			rank[docID].includesWords++
 			rank[docID].tf_idf += float64(freq) / doc.GetFullSize() * (idf - 1.0)
 			rank[docID].bm25 += culcBM25(idf, float64(freq), doc, idx.AvgLen)
 
@@ -174,17 +173,6 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 	return result[:cap]
 }
 
-func (idx *SearchIndex) fetchDocuments(words []string, rank map[uuid.UUID]*requestRanking, index map[string]map[uuid.UUID]int) {
-	for _, word := range words {
-		if _, ex := index[word]; !ex {
-			continue
-		}
-		for id := range index[word] {
-			rank[id].includesWords++
-		}
-	}
-}
-
 func culcBM25(idf float64, tf float64, doc *model.Document, avgLen float64) float64 {
 	k1 := 1.2
 	b := 0.75
@@ -203,7 +191,7 @@ func (idx *SearchIndex) AddDocument(doc *model.Document) {
     idx.mu.Lock()
     defer idx.mu.Unlock()
 	
-	idx.indexRepos.IndexDocument(doc.Id.String(), doc.Words)
+	idx.indexRepos.IndexDocument(doc.Id.String(), doc.Sequence)
 	doc.ArchiveDocument()
 	idx.indexRepos.SaveDocument(doc)
 }
@@ -238,11 +226,11 @@ func (idx *SearchIndex) TokenizeAndStem(text string) []string {
     return tokens
 }
 
-func (idx *SearchIndex) HandleDocumentWords(doc *model.Document, text string) {
+func (idx *SearchIndex) HandleDocumentWords(text string) ([]int, error) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	
-	doc.Words = append(doc.Words, idx.TokenizeAndStem(text)...)
+	return idx.indexRepos.TransferOrSaveToSequence(idx.TokenizeAndStem(text))
 }
 
 func (idx *SearchIndex) GetContext() context.Context {

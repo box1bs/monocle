@@ -12,9 +12,9 @@ import (
 	"syscall"
 
 	"github.com/box1bs/Saturday/configs"
-	searchIndex "github.com/box1bs/Saturday/internal/app/index"
+	"github.com/box1bs/Saturday/internal/app/index"
 	"github.com/box1bs/Saturday/internal/model"
-	indexRepository "github.com/box1bs/Saturday/internal/repository"
+	"github.com/box1bs/Saturday/internal/repository"
 	srv "github.com/box1bs/Saturday/internal/server"
 	"github.com/box1bs/Saturday/logs/logger"
 	"github.com/box1bs/Saturday/pkg/stemmer"
@@ -43,7 +43,7 @@ func main() {
 	}
 	defer db.Close()
 
-	ir := indexRepository.NewIndexRepository(db)
+	ir := repository.NewIndexRepository(db)
 
 	if *runCli {
 		runCliMode(logger, *configFile, ir)
@@ -77,7 +77,7 @@ func runCliMode(logger *logger.AsyncLogger, configPath string, ir model.Reposito
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	i := searchIndex.NewSearchIndex(stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), logger, ir, ctx)
+	i := index.NewSearchIndex(stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), logger, ir, ctx)
 	if err := i.Index(cfg); err != nil {
 		panic(err)
 	}
@@ -88,7 +88,11 @@ func runCliMode(logger *logger.AsyncLogger, configPath string, ir model.Reposito
 	for {
 		fmt.Print("> ")
 		query, _ := reader.ReadString('\n')
-		Present(i.Search(strings.TrimSpace(query)))
+		query = strings.TrimSpace(query)
+		if query == "q" {
+			return
+		}
+		Present(i.Search(query))
 	}
 }
 

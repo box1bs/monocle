@@ -1,4 +1,4 @@
-package searchIndex
+package index
 
 import (
 	"bytes"
@@ -12,12 +12,12 @@ import (
 )
 
 type modelRequest struct {
-	QueryWords 	[]string	`json:"query"`
+	QueryWords 	[]int			`json:"query"`
 	Docs  	[]modelRequestData 	`json:"documents"`
 }
 
 type modelRequestData struct {
-	Words 	[]string	`json:"words"`
+	Words 	[]int		`json:"words"`
 	Bm25	float64		`json:"bm25"`
 	Tf_Idf	float64		`json:"tf_idf"`
 }
@@ -27,7 +27,7 @@ type modelResponse struct {
 	Score    float64 	`json:"score"`
 }
 
-func handleBinaryScore(query []string, docs []*model.Document, rank map[uuid.UUID]*requestRanking) error {
+func handleBinaryScore(query []int, docs []*model.Document, rank map[uuid.UUID]*requestRanking) error {
 	cash := make(map[string]*model.Document)
 	mr := modelRequest{
 		QueryWords: query, 
@@ -35,9 +35,9 @@ func handleBinaryScore(query []string, docs []*model.Document, rank map[uuid.UUI
 	}
 
 	for _, doc := range docs {
-		cash[strings.Join(doc.Words, " ")] = doc
+		cash[strings.Join(doc.Sequence, " ")] = doc
 		mr.Docs = append(mr.Docs, modelRequestData{
-			Words: doc.Words,
+			Words: doc.Sequence,
 			Bm25: rank[doc.Id].bm25,
 			Tf_Idf: rank[doc.Id].tf_idf,
 		})

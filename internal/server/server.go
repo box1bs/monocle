@@ -20,13 +20,13 @@ type server struct {
 	activeJobs     	map[string]*jobInfo
 	jobsMutex      	sync.RWMutex
 	logger         	model.Logger
-	indexInstances 	map[string]*searchIndex.SearchIndex
+	indexInstances 	map[string]*index.SearchIndex
 	indexRepos		model.Repository
 }
 
 type jobInfo struct {
 	id            	string
-	index         	*searchIndex.SearchIndex
+	index         	*index.SearchIndex
 	status        	string
 	cancel 			context.CancelFunc
 }
@@ -35,7 +35,7 @@ func NewSaturdayServer(logger model.Logger, ir model.Repository) *server {
 	return &server{
 		activeJobs:     make(map[string]*jobInfo),
 		logger:         logger,
-		indexInstances: make(map[string]*searchIndex.SearchIndex),
+		indexInstances: make(map[string]*index.SearchIndex),
 		indexRepos: ir,
 	}
 }
@@ -100,7 +100,7 @@ func (s *server) startCrawlHandler(w http.ResponseWriter, r *http.Request) {
 		Rate:           req.Rate,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	idx := searchIndex.NewSearchIndex(stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), s.logger, s.indexRepos, ctx)
+	idx := index.NewSearchIndex(stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), s.logger, s.indexRepos, ctx)
 	job := &jobInfo{
 		id:            	jobID,
 		index:         	idx,

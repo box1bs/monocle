@@ -1,4 +1,4 @@
-package indexRepository
+package repository
 
 import (
 	"strconv"
@@ -7,6 +7,7 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/google/uuid"
+	"fmt"
 )
 
 type IndexRepository struct {
@@ -46,13 +47,13 @@ func (ir *IndexRepository) SaveVisitedUrls(visitedURLs *sync.Map) error {
 	return nil
 }
 
-func (ir *IndexRepository) IndexDocument(docID string, words []string) error {
-	wordFreq := make(map[string]int)
+func (ir *IndexRepository) IndexDocument(docID string, words []int) error {
+	wordFreq := make(map[int]int)
 	for _, word := range words {
 		wordFreq[word]++
 	}
 	for word, freq := range wordFreq {
-        key := []byte(word + "_" + docID)
+        key := []byte(fmt.Sprint(word) + "_" + docID)
         if err := ir.db.Update(func(txn *badger.Txn) error {
             return txn.Set(key, []byte(strconv.Itoa(freq)))
         }); err != nil {
@@ -62,16 +63,16 @@ func (ir *IndexRepository) IndexDocument(docID string, words []string) error {
     return nil
 }
 
-func (ir *IndexRepository) GetDocumentsByWord(word string) (map[uuid.UUID]int, error) {
+func (ir *IndexRepository) GetDocumentsByWord(word int) (map[uuid.UUID]int, error) {
 	result := make(map[uuid.UUID]int)
-	prefix := []byte(word + "_")
+	prefix := []byte(fmt.Sprint(word) + "_")
 	return result, ir.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
             item := it.Item()
             key := string(item.Key())
-            docID := strings.TrimPrefix(key, word + "_")
+            docID := strings.TrimPrefix(key, fmt.Sprint(word) + "_")
 			id, err := uuid.Parse(docID)
 			if err != nil {
 				return err
