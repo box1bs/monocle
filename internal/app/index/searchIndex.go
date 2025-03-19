@@ -203,8 +203,9 @@ func (idx *SearchIndex) AddDocument(doc *model.Document) {
     idx.mu.Lock()
     defer idx.mu.Unlock()
 	
-	idx.indexRepos.SaveDocument(doc)
 	idx.indexRepos.IndexDocument(doc.Id.String(), doc.Words)
+	doc.ArchiveDocument()
+	idx.indexRepos.SaveDocument(doc)
 }
 
 func (idx *SearchIndex) TokenizeAndStem(text string) []string {
@@ -242,7 +243,6 @@ func (idx *SearchIndex) HandleDocumentWords(doc *model.Document, text string) {
 	defer idx.mu.Unlock()
 	
 	doc.Words = append(doc.Words, idx.TokenizeAndStem(text)...)
-	doc.ArchiveDocument()
 }
 
 func (idx *SearchIndex) GetContext() context.Context {

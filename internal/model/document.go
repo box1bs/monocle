@@ -11,8 +11,9 @@ type Document struct {
 }
 
 func (d *Document) ArchiveDocument() {
+	lenght := min(len(d.Words), 256)
 	d.PartOfFullSize = 256.0 / float64(len(d.Words))
-	d.Words = d.Words[:256]
+	d.Words = d.Words[:lenght]
 }
 
 func (d *Document) GetFullSize() float64 {

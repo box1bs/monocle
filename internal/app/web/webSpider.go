@@ -141,14 +141,15 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, canc context.CancelFu
     document := &model.Document{
         Id: uuid.New(),
         URL: currentURL,
-        Words: make([]string, 0, 256),
     }
 
-	var links []string
 	c, cancel := context.WithTimeout(ctx, time.Second * 15)
 	defer cancel()
-    document.Description, links = parseHTMLStream(c, doc, currentURL, userAgent, ws.maxLinksInPage, ws.onlySameDomain, parent.GetRules(), document, idx.HandleDocumentWords)
+	var links []string
+	var content string
+    document.Description, links, content = parseHTMLStream(c, doc, currentURL, userAgent, ws.maxLinksInPage, ws.onlySameDomain, parent.GetRules())
 
+	idx.HandleDocumentWords(document, content)
     idx.AddDocument(document)
 
     for _, link := range links {
@@ -259,7 +260,7 @@ func cleanUTMParams(rawURL *url.URL) *url.URL {
 	return rawURL
 }
 
-func parseHTMLStream(ctx context.Context, htmlContent, baseURL, userAgent string, maxLinks int, onlySameOrigin bool, rules *parser.RobotsTxt, doc *model.Document, f func(*model.Document, string)) (description string, links []string) {
+func parseHTMLStream(ctx context.Context, htmlContent, baseURL, userAgent string, maxLinks int, onlySameOrigin bool, rules *parser.RobotsTxt) (description string, links []string, fullText string) {
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
 	var metaDesc, ogDesc, firstParagraph string
 	var inParagraph, inScriptOrStyle bool
@@ -274,8 +275,7 @@ func parseHTMLStream(ctx context.Context, htmlContent, baseURL, userAgent string
 		if tokenCount % checkContextEvery == 0 {
 			select {
 			case <-ctx.Done():
-				fullText := strings.TrimSpace(fullTextBuilder.String())
-				f(doc, fullText)
+				fullText = strings.TrimSpace(fullTextBuilder.String())
 				
 				if metaDesc != "" {
 					description = metaDesc
@@ -386,8 +386,7 @@ func parseHTMLStream(ctx context.Context, htmlContent, baseURL, userAgent string
 		}
 	}
 
-	fullText := strings.TrimSpace(fullTextBuilder.String())
-    f(doc, fullText)
+	fullText = strings.TrimSpace(fullTextBuilder.String())
     
 	if metaDesc != "" {
 		description = metaDesc
