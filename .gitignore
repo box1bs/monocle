@@ -4,9 +4,9 @@ logs/indexedURLs.txt
 
 main.exe
 
-.dockerignore
-dockerfile
+.Dockerignore
+Dockerfile
 dataset.csv
 
-internal/app/ramking/model/dockerfile
-internal/app/ramking/model/.dockerignore
+internal/app/ramking/model/Dockerfile
+internal/app/ramking/model/.Dockerignore
