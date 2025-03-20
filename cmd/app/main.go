@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+
 	"strings"
 	"syscall"
 
@@ -36,8 +37,7 @@ func main() {
 	}
 	defer logger.File.Close()
 
-	opts := badger.DefaultOptions("/index/badger")
-	db, err := badger.Open(opts)
+	db, err := badger.Open(badger.DefaultOptions("/index/badger"))
 	if err != nil {
 		panic(err)
 	}

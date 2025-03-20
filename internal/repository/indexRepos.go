@@ -5,13 +5,32 @@ import (
 	"strings"
 	"sync"
 
+	"fmt"
+
 	"github.com/dgraph-io/badger/v3"
 	"github.com/google/uuid"
-	"fmt"
 )
 
 type IndexRepository struct {
 	db *badger.DB
+}
+
+func (ir *IndexRepository) DebugPrintKeys(prefix string) error {
+    return ir.db.View(func(txn *badger.Txn) error {
+        it := txn.NewIterator(badger.DefaultIteratorOptions)
+        defer it.Close()
+        prefixBytes := []byte(prefix)
+        for it.Seek(prefixBytes); it.ValidForPrefix(prefixBytes); it.Next() {
+            item := it.Item()
+            key := item.Key()
+            fmt.Printf("Key: %s\n", string(key))
+            item.Value(func(val []byte) error {
+                fmt.Printf("Value: %s\n", string(val))
+                return nil
+            })
+        }
+        return nil
+    })
 }
 
 func NewIndexRepository(db *badger.DB) *IndexRepository {
@@ -47,13 +66,13 @@ func (ir *IndexRepository) SaveVisitedUrls(visitedURLs *sync.Map) error {
 	return nil
 }
 
-func (ir *IndexRepository) IndexDocument(docID string, words []int) error {
+func (ir *IndexRepository) IndexDocument(docID uuid.UUID, words []int) error {
 	wordFreq := make(map[int]int)
 	for _, word := range words {
 		wordFreq[word]++
 	}
 	for word, freq := range wordFreq {
-        key := []byte(fmt.Sprint(word) + "_" + docID)
+        key := fmt.Appendf(nil, WordDocumentKeyFormat, word, docID.String())
         if err := ir.db.Update(func(txn *badger.Txn) error {
             return txn.Set(key, []byte(strconv.Itoa(freq)))
         }); err != nil {
@@ -65,14 +84,14 @@ func (ir *IndexRepository) IndexDocument(docID string, words []int) error {
 
 func (ir *IndexRepository) GetDocumentsByWord(word int) (map[uuid.UUID]int, error) {
 	result := make(map[uuid.UUID]int)
-	prefix := []byte(fmt.Sprint(word) + "_")
+	prefix := fmt.Appendf(nil, "%d_", word)
 	return result, ir.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
             item := it.Item()
             key := string(item.Key())
-            docID := strings.TrimPrefix(key, fmt.Sprint(word) + "_")
+            docID := strings.TrimPrefix(key, fmt.Sprintf("%d_", word))
 			id, err := uuid.Parse(docID)
 			if err != nil {
 				return err

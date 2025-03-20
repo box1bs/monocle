@@ -6,20 +6,52 @@ import (
 	"github.com/box1bs/Saturday/internal/model"
 	"github.com/dgraph-io/badger/v3"
 	"github.com/google/uuid"
+	"slices"
+)
+
+const (
+    DocumentKeyPrefix = "doc:"
+    WordKeyPrefix = "word:"
+    IdKeyPrefix = "id:"
+    WordDocumentKeyFormat = "%d_%s"
 )
 
 func (ir *IndexRepository) documentToBytes(doc *model.Document) ([]byte, error) {
-	return json.Marshal(doc)
+	return json.Marshal(map[string]any{
+		"id": doc.Id.String(),
+		"url": doc.URL,
+		"description": doc.Description,
+		"sequence": doc.Sequence,
+		"part_of_full_size": doc.PartOfFullSize,
+	})
 }
 
-func (ir *IndexRepository) bytesToDocument(data []byte) (*model.Document, error) {
-	doc := new(model.Document)
-	err := json.Unmarshal(data, doc)
+func (ir *IndexRepository) bytesToDocument(body []byte) (*model.Document, error) {
+	data := make(map[string]any) 
+	err := json.Unmarshal(body, &data)
+	if err != nil {
+		return nil, err
+	}
+	id, err := uuid.Parse(data["id"].(string))
+	if err != nil {
+		return nil, err
+	}
+	doc := &model.Document{
+		Id: id,
+		URL: data["url"].(string),
+		Description: data["description"].(string),
+		PartOfFullSize: data["part_of_full_size"].(float64),
+	}
+	seq := make([]int, 0)
+	for _, ids := range data["sequence"].([]interface{}) {
+		seq = append(seq, int(ids.(float64)))
+	}
+	doc.Sequence = seq
 	return doc, err
 }
 
 func createDocumentKey(docID uuid.UUID) []byte {
-	return []byte("doc:" + docID.String())
+	return []byte(DocumentKeyPrefix + docID.String())
 }
 
 func (ir *IndexRepository) SaveDocument(doc *model.Document) error {
@@ -47,7 +79,7 @@ func (ir *IndexRepository) GetDocumentByID(docID uuid.UUID) (*model.Document, er
 		}
 
 		return item.Value(func(val []byte) error {
-			docBytes = append([]byte{}, val...)
+			docBytes = slices.Clone(val)
 			return nil
 		})
 	})
@@ -63,19 +95,17 @@ func (ir *IndexRepository) GetAllDocuments() ([]*model.Document, error) {
 	var documents []*model.Document
 	
 	err := ir.db.View(func(txn *badger.Txn) error {
-		docPrefix := []byte("doc:")
-		
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 10
 		it := txn.NewIterator(opts)
 		defer it.Close()
 		
-		for it.Seek(docPrefix); it.ValidForPrefix(docPrefix); it.Next() {
+		for it.Seek([]byte(DocumentKeyPrefix)); it.ValidForPrefix([]byte(DocumentKeyPrefix)); it.Next() {
 			item := it.Item()
 			var docBytes []byte
 			
 			err := item.Value(func(val []byte) error {
-				docBytes = append([]byte{}, val...)
+				docBytes = slices.Clone(val)
 				return nil
 			})
 			
@@ -105,7 +135,7 @@ func (ir *IndexRepository) GetDocumentsCount() (int, error) {
 	var count int
 	
 	err := ir.db.View(func(txn *badger.Txn) error {
-		docPrefix := []byte("doc:")
+		docPrefix := []byte(DocumentKeyPrefix)
 		
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = false

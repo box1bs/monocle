@@ -19,6 +19,7 @@ def tokens_to_sequence(tokens: list[str]):
     return [vocab.get(token, 0) for token in tokens]
 
 class Document(BaseModel):
+    id: str
     words: list[str]
     bm25: float
     tf_idf: float
@@ -52,7 +53,7 @@ async def predict(request: PredictRequest):
     print(f"Query tokens: {query_tokens}")
     print(f"Query sequence: {query_seq}")
 
-    return [{"document": " ".join(doc.words), "score": score}
+    return [{"id": doc.id, "score": score}
             for doc, score in zip(documents, predictions)]
 
 if __name__ == "__main__":

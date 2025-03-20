@@ -5,43 +5,28 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"strings"
 
-	"github.com/box1bs/Saturday/internal/model"
 	"github.com/google/uuid"
 )
 
 type modelRequest struct {
-	QueryWords 	[]int			`json:"query"`
-	Docs  	[]modelRequestData 	`json:"documents"`
+	QueryWords 	[]string			`json:"query"`
+	Docs  		[]modelRequestData 	`json:"documents"`
 }
 
 type modelRequestData struct {
-	Words 	[]int		`json:"words"`
+	Id 		string		`json:"id"`
+	Words 	[]string	`json:"words"`
 	Bm25	float64		`json:"bm25"`
 	Tf_Idf	float64		`json:"tf_idf"`
 }
 
 type modelResponse struct {
-	Document string 	`json:"document"`
-	Score    float64 	`json:"score"`
+	Id 		string 		`json:"id"`
+	Score   float64 	`json:"score"`
 }
 
-func handleBinaryScore(query []int, docs []*model.Document, rank map[uuid.UUID]*requestRanking) error {
-	cash := make(map[string]*model.Document)
-	mr := modelRequest{
-		QueryWords: query, 
-		Docs: make([]modelRequestData, 0),
-	}
-
-	for _, doc := range docs {
-		cash[strings.Join(doc.Sequence, " ")] = doc
-		mr.Docs = append(mr.Docs, modelRequestData{
-			Words: doc.Sequence,
-			Bm25: rank[doc.Id].bm25,
-			Tf_Idf: rank[doc.Id].tf_idf,
-		})
-	}
+func handleBinaryScore(mr modelRequest, rank map[uuid.UUID]*requestRanking) error {
 	b, err := json.Marshal(mr)
 	if err != nil {
 		return err
@@ -53,7 +38,7 @@ func handleBinaryScore(query []int, docs []*model.Document, rank map[uuid.UUID]*
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	predictions := make([]modelResponse, 0, len(docs))
+	predictions := make([]modelResponse, 0, len(mr.Docs))
 	
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -70,10 +55,14 @@ func handleBinaryScore(query []int, docs []*model.Document, rank map[uuid.UUID]*
 	if err := json.Unmarshal(body, &predictions); err != nil {
 		return err
 	}
-
+	/*
 	for _, predict := range predictions {
-		rank[cash[predict.Document].Id].relation = predict.Score
-	}
+		uid, err := uuid.Parse(predict.Id)
+		if err != nil {
+			return err
+		}
+		rank[uid].relation = predict.Score
+	}*/
 
 	return nil
 }

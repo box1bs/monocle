@@ -49,7 +49,7 @@ func (idx *SearchIndex) Index(config *configs.ConfigData) error {
 	idx.indexRepos.LoadVisitedUrls(mp)
 	defer idx.indexRepos.SaveVisitedUrls(mp)
 	var rl *web.RateLimiter
-	ctx, cancel := context.WithTimeout(context.Background(), 90 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120 * time.Second)
 	defer cancel()
     for _, url := range config.BaseURLs {
 		if config.Rate > 0 {
@@ -70,9 +70,9 @@ func (idx *SearchIndex) Index(config *configs.ConfigData) error {
 
 type requestRanking struct {
 	includesWords 	int
-	relation 		float64
 	tf_idf 			float64
 	bm25 			float64
+	//relation 		float64
 	//any ranking scores
 }
 
@@ -103,8 +103,9 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 	
 	rank := make(map[uuid.UUID]*requestRanking)
 
-	words, err := idx.indexRepos.TransferOrSaveToSequence(idx.TokenizeAndStem(query))
-	if err != nil {
+	queryWords := idx.TokenizeAndStem(query)
+	words, err := idx.indexRepos.TransferOrSaveToSequence(queryWords, false)
+	if err != nil || len(words) == 0 {
 		return nil
 	}
 	index := make(map[int]map[uuid.UUID]int)
@@ -158,19 +159,36 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 	if lenght == 0 {
 		return nil
 	}
-	cap := min(lenght, 50)
 
-	if err := handleBinaryScore(words, result, rank); err != nil {
-		return nil
+	/*docs := make([]modelRequestData, 0)
+	for _, doc := range result {
+		words, err := idx.indexRepos.SequenceToWords(doc.Sequence)
+		if err != nil {
+			panic(err)
+		}
+		docs = append(docs, modelRequestData{
+			Id: doc.Id.String(),
+			Words: words,
+			Bm25: rank[doc.Id].bm25,
+			Tf_Idf: rank[doc.Id].tf_idf,
+		})
 	}
 
+	mr := modelRequest{
+		QueryWords: queryWords,
+		Docs: docs,
+	}
+
+	if err := handleBinaryScore(mr, rank); err != nil {
+		return nil
+	}*/
+
 	sort.Slice(result, func(i, j int) bool {
-		return rank[result[i].Id].includesWords > rank[result[j].Id].includesWords || rank[result[i].Id].relation > rank[result[j].Id].relation || 
-		rank[result[i].Id].relation == rank[result[j].Id].relation && rank[result[i].Id].includesWords == rank[result[j].Id].includesWords && 
+		return rank[result[i].Id].includesWords > rank[result[j].Id].includesWords || rank[result[i].Id].includesWords == rank[result[j].Id].includesWords && 
 		(rank[result[i].Id].bm25 > rank[result[j].Id].bm25 || rank[result[i].Id].tf_idf > rank[result[j].Id].tf_idf)
 	})
 
-	return result[:cap]
+	return result[:min(lenght, 50)]
 }
 
 func culcBM25(idf float64, tf float64, doc *model.Document, avgLen float64) float64 {
@@ -191,7 +209,7 @@ func (idx *SearchIndex) AddDocument(doc *model.Document) {
     idx.mu.Lock()
     defer idx.mu.Unlock()
 	
-	idx.indexRepos.IndexDocument(doc.Id.String(), doc.Sequence)
+	idx.indexRepos.IndexDocument(doc.Id, doc.Sequence)
 	doc.ArchiveDocument()
 	idx.indexRepos.SaveDocument(doc)
 }
@@ -230,7 +248,7 @@ func (idx *SearchIndex) HandleDocumentWords(text string) ([]int, error) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	
-	return idx.indexRepos.TransferOrSaveToSequence(idx.TokenizeAndStem(text))
+	return idx.indexRepos.TransferOrSaveToSequence(idx.TokenizeAndStem(text), true)
 }
 
 func (idx *SearchIndex) GetContext() context.Context {

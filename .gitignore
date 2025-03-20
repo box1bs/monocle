@@ -1,6 +1,6 @@
 internal/app/ranking/model/__pycache__/
 internal/app/ranking/model/.venv/
-logs/indexedURLs.txt
+logs/*.txt
 
 main.exe
 
