@@ -31,12 +31,6 @@ func main() {
 	)
 	flag.Parse()
 
-	logger, err := logger.NewAsyncLogger(*logFile)
-	if err != nil {
-		panic(err)
-	}
-	defer logger.File.Close()
-
 	db, err := badger.Open(badger.DefaultOptions("/index/badger"))
 	if err != nil {
 		panic(err)
@@ -46,8 +40,13 @@ func main() {
 	ir := repository.NewIndexRepository(db)
 
 	if *runCli {
-		runCliMode(logger, *configFile, ir)
+		runCliMode(*configFile, *logFile, ir)
 		return
+	}
+
+	al, err := logger.NewAsyncLogger(os.Stdout)
+	if err != nil {
+		panic(err)
 	}
 
 	stop := make(chan os.Signal, 1)
@@ -55,7 +54,7 @@ func main() {
 
 	errChan := make(chan error)
 	go func() {
-		errChan <- srv.StartServer(*httpPort, logger, ir)
+		errChan <- srv.StartServer(*httpPort, al, ir)
 	}()
 
 	select {
@@ -69,8 +68,19 @@ func main() {
 }
 
 // Original CLI mode functionality
-func runCliMode(logger *logger.AsyncLogger, configPath string, ir model.Repository) {
+func runCliMode(configPath, pathTolocalLog string, ir model.Repository) {
 	cfg, err := configs.UploadLocalConfiguration(configPath)
+	if err != nil {
+		panic(err)
+	}
+
+	file, err := os.Create(pathTolocalLog)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	logger, err := logger.NewAsyncLogger(file)
 	if err != nil {
 		panic(err)
 	}

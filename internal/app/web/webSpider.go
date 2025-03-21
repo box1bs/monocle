@@ -149,11 +149,11 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, canc context.CancelFu
 	var content string
     document.Description, links, content = parseHTMLStream(c, doc, currentURL, userAgent, ws.maxLinksInPage, ws.onlySameDomain, parent.GetRules())
 
-	document.Sequence, err =  idx.HandleDocumentWords(content)
+	words, err := idx.HandleDocumentWords(content)
 	if err != nil {
 		return
 	}
-    idx.AddDocument(document)
+    idx.AddDocument(document, words)
 
     for _, link := range links {
 		select {

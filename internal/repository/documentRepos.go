@@ -21,7 +21,7 @@ func (ir *IndexRepository) documentToBytes(doc *model.Document) ([]byte, error) 
 		"id": doc.Id.String(),
 		"url": doc.URL,
 		"description": doc.Description,
-		"sequence": doc.Sequence,
+		"words_count": doc.WordCount,
 		"part_of_full_size": doc.PartOfFullSize,
 	})
 }
@@ -40,13 +40,9 @@ func (ir *IndexRepository) bytesToDocument(body []byte) (*model.Document, error)
 		Id: id,
 		URL: data["url"].(string),
 		Description: data["description"].(string),
+		WordCount: data["words_count"].(int),
 		PartOfFullSize: data["part_of_full_size"].(float64),
 	}
-	seq := make([]int, 0)
-	for _, ids := range data["sequence"].([]interface{}) {
-		seq = append(seq, int(ids.(float64)))
-	}
-	doc.Sequence = seq
 	return doc, err
 }
 

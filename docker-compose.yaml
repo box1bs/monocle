@@ -7,11 +7,3 @@ services:
 
     ports:
       - "50051:50051"
-
-  pyserver:
-    build:
-      context: ./internal/ranking/model/
-      dockerfile: Dockerfile
-    
-    ports:
-      - "8000:8000"

@@ -144,7 +144,7 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 			}
 
 			rank[docID].includesWords++
-			rank[docID].tf_idf += float64(freq) / doc.GetFullSize() * (idf - 1.0)
+			rank[docID].tf_idf += float64(freq) / doc.GetFullSize() * idf
 			rank[docID].bm25 += culcBM25(idf, float64(freq), doc, idx.AvgLen)
 
 			if _, ex := alreadyIncluded[docID]; ex {
@@ -159,29 +159,6 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 	if lenght == 0 {
 		return nil
 	}
-
-	/*docs := make([]modelRequestData, 0)
-	for _, doc := range result {
-		words, err := idx.indexRepos.SequenceToWords(doc.Sequence)
-		if err != nil {
-			panic(err)
-		}
-		docs = append(docs, modelRequestData{
-			Id: doc.Id.String(),
-			Words: words,
-			Bm25: rank[doc.Id].bm25,
-			Tf_Idf: rank[doc.Id].tf_idf,
-		})
-	}
-
-	mr := modelRequest{
-		QueryWords: queryWords,
-		Docs: docs,
-	}
-
-	if err := handleBinaryScore(mr, rank); err != nil {
-		return nil
-	}*/
 
 	sort.Slice(result, func(i, j int) bool {
 		return rank[result[i].Id].includesWords > rank[result[j].Id].includesWords || rank[result[i].Id].includesWords == rank[result[j].Id].includesWords && 
@@ -205,12 +182,15 @@ func (idx *SearchIndex) IncUrlsCounter() {
 	atomic.AddInt32(&idx.UrlsCrawled, 1)
 }
 
-func (idx *SearchIndex) AddDocument(doc *model.Document) {
+func (idx *SearchIndex) AddDocument(doc *model.Document, words []int) {
     idx.mu.Lock()
     defer idx.mu.Unlock()
 	
-	idx.indexRepos.IndexDocument(doc.Id, doc.Sequence)
-	doc.ArchiveDocument()
+	idx.indexRepos.IndexDocument(doc.Id, words)
+
+	doc.WordCount = len(words)
+	doc.PartOfFullSize = 256.0 / float64(doc.WordCount)
+	
 	idx.indexRepos.SaveDocument(doc)
 }
 

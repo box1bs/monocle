@@ -11,14 +11,14 @@ import (
 type Indexer interface {
     Write(string)
     HandleDocumentWords(string) ([]int, error)
-    AddDocument(*Document)
+    AddDocument(*Document, []int)
     IncUrlsCounter()
 	GetContext() context.Context
 }
 
 type Logger interface {
 	Write(string)
-	Close() error
+	Close()
 }
 
 type Repository interface {

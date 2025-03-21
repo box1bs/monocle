@@ -1,37 +1,30 @@
 package logger
 
 import (
-	"bufio"
+	"io"
 	"log"
-	"os"
 	"sync"
 )
 
 type AsyncLogger struct {
-	File *os.File
-	ch   chan string
-	wg   sync.WaitGroup
+	wr 		io.Writer
+	ch   	chan string
+	wg   	sync.WaitGroup
 }
 
-func NewAsyncLogger(fileName string) (*AsyncLogger, error) {
-	file, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
-	if err != nil {
-		return nil, err
-	}
+func NewAsyncLogger(wr io.Writer) (*AsyncLogger, error) {
 	al := &AsyncLogger{
-		File: file,
-		ch:   make(chan string, 10000),
+		wr: 	wr,
+		ch:   	make(chan string, 10000),
 	}
 	al.wg.Add(1)
 	go func() {
 		defer al.wg.Done()
-		writer := bufio.NewWriter(al.File)
 		for msg := range al.ch {
-			_, err := writer.WriteString(msg + "\n")
+			_, err := al.wr.Write([]byte(msg))
 			if err != nil {
 				log.Println("error logging url: " + msg)
 			}
-			writer.Flush()
 		}
 	}()
 	return al, nil
@@ -45,8 +38,7 @@ func (l *AsyncLogger) Write(data string) {
 	}
 }
 
-func (l *AsyncLogger) Close() error {
+func (l *AsyncLogger) Close() {
 	close(l.ch)
 	l.wg.Wait()
-	return l.File.Close()
 }
