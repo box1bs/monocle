@@ -190,13 +190,9 @@ func (s *server) searchHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Search index isn't exist", http.StatusNotFound)
 		return
 	}
-	results := idx.Search(req.Query)
+	results := idx.Search(req.Query, 3.0, max(0, req.MaxResults))
 	var responseResults []SearchResult
-	maxResults := req.MaxResults
-	if maxResults <= 0 || maxResults > len(results) {
-		maxResults = len(results)
-	}
-	for i := range maxResults {
+	for i := range max(0, req.MaxResults) {
 		responseResults = append(responseResults, SearchResult{
 			Url:         results[i].URL,
 			Description: results[i].Description,

@@ -93,7 +93,7 @@ func (idx *SearchIndex) updateAVGLen() {
 	idx.AvgLen = float64(wordCount) / float64(len(docs))
 }
 
-func (idx *SearchIndex) Search(query string) []*model.Document {
+func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*model.Document {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	
@@ -101,39 +101,40 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 		idx.updateAVGLen()
 	}
 	
-	rank := make(map[uuid.UUID]*requestRanking)
+	rank := make(map[uuid.UUID]requestRanking)
 
-	queryWords := idx.TokenizeAndStem(query)
-	words, err := idx.indexRepos.TransferOrSaveToSequence(queryWords, false)
-	if err != nil || len(words) == 0 {
+	queryTerms := idx.TokenizeAndStem(query)
+	terms, err := idx.indexRepos.TransferOrSaveToSequence(queryTerms, false)
+	if err != nil || len(terms) == 0 {
 		return nil
 	}
+
+	minQueryTermsCount := len(terms) / 2
+	if minQueryTermsCount < 1 {
+		minQueryTermsCount = 1 // At least 1 term should match
+	}
+
 	index := make(map[int]map[uuid.UUID]int)
-	for _, word := range words {
-		mp, err := idx.indexRepos.GetDocumentsByWord(word)
+	for _, term := range terms {
+		mp, err := idx.indexRepos.GetDocumentsByWord(term)
 		if err != nil {
 			log.Println(err)
 			return nil
 		}
-		index[word] = mp
-		for docID := range mp {
-			if _, ok := rank[docID]; !ok {
-				rank[docID] = &requestRanking{}
-			}
-		}
+		index[term] = mp
 	}
 	
 	result := make([]*model.Document, 0)
 	alreadyIncluded := make(map[uuid.UUID]struct{})
-	for _, word := range words {
+	for _, term := range terms {
 		lenght, err := idx.indexRepos.GetDocumentsCount()
 		if err != nil {
 			log.Println(err)
 			return nil
 		}
-		idf := math.Log(float64(lenght) / float64(len(index[word]))) + 1.0
+		idf := math.Log(float64(lenght) / float64(len(index[term]) + 1)) + 1.0
 		
-		for docID, freq := range index[word] {
+		for docID, freq := range index[term] {
 			doc, err := idx.indexRepos.GetDocumentByID(docID)
 			if err != nil {
 				log.Println(err)
@@ -143,9 +144,14 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 				continue
 			}
 
-			rank[docID].includesWords++
-			rank[docID].tf_idf += float64(freq) / doc.GetFullSize() * idf
-			rank[docID].bm25 += culcBM25(idf, float64(freq), doc, idx.AvgLen)
+			r, ex := rank[docID]
+			if !ex {
+				rank[docID] = requestRanking{}
+			}
+			r.includesWords++
+			r.tf_idf += float64(freq) / doc.GetFullSize() * idf
+			r.bm25 += culcBM25(idf, float64(freq), doc, idx.AvgLen)
+			rank[docID] = r
 
 			if _, ex := alreadyIncluded[docID]; ex {
 				continue
@@ -155,8 +161,17 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 		}
 	}
 
-	lenght := len(result)
-	if lenght == 0 {
+	filteredResult := make([]*model.Document, 0)
+	for _, doc := range result {
+		r := rank[doc.Id]
+
+		if r.includesWords >= minQueryTermsCount && r.tf_idf >= quorum {
+			filteredResult = append(filteredResult, doc)
+		}
+	}
+
+	length := len(filteredResult)
+	if length == 0 {
 		return nil
 	}
 
@@ -165,7 +180,7 @@ func (idx *SearchIndex) Search(query string) []*model.Document {
 		(rank[result[i].Id].bm25 > rank[result[j].Id].bm25 || rank[result[i].Id].tf_idf > rank[result[j].Id].tf_idf)
 	})
 
-	return result[:min(lenght, 50)]
+	return result[:min(length, maxLen)]
 }
 
 func culcBM25(idf float64, tf float64, doc *model.Document, avgLen float64) float64 {
@@ -190,7 +205,7 @@ func (idx *SearchIndex) AddDocument(doc *model.Document, words []int) {
 
 	doc.WordCount = len(words)
 	doc.PartOfFullSize = 256.0 / float64(doc.WordCount)
-	
+
 	idx.indexRepos.SaveDocument(doc)
 }
 

@@ -102,7 +102,7 @@ func runCliMode(configPath, pathTolocalLog string, ir model.Repository) {
 		if query == "q" {
 			return
 		}
-		Present(i.Search(query))
+		Present(i.Search(query, 3.0, 50))
 	}
 }
 
