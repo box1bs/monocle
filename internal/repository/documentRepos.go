@@ -17,31 +17,33 @@ const (
 )
 
 func (ir *IndexRepository) documentToBytes(doc *model.Document) ([]byte, error) {
-	return json.Marshal(map[string]any{
-		"id": doc.Id.String(),
-		"url": doc.URL,
-		"description": doc.Description,
-		"words_count": doc.WordCount,
-		"part_of_full_size": doc.PartOfFullSize,
-	})
+	return json.Marshal(doc)
 }
 
 func (ir *IndexRepository) bytesToDocument(body []byte) (*model.Document, error) {
-	data := make(map[string]any) 
-	err := json.Unmarshal(body, &data)
+	var payload struct {
+		Id 				string 		`json:"id"`
+		URL 			string 		`json:"url"`
+		Description 	string 		`json:"description"`
+		WordCount 		int 		`json:"words_count"`
+		PartOfFullSize 	float64 	`json:"part_of_full_size"`
+		Vec 			[]float64 	`json:"vec"`
+	}
+	err := json.Unmarshal(body, &payload)
 	if err != nil {
 		return nil, err
 	}
-	id, err := uuid.Parse(data["id"].(string))
+	id, err := uuid.Parse(payload.Id)
 	if err != nil {
 		return nil, err
 	}
 	doc := &model.Document{
 		Id: id,
-		URL: data["url"].(string),
-		Description: data["description"].(string),
-		WordCount: data["words_count"].(int),
-		PartOfFullSize: data["part_of_full_size"].(float64),
+		URL: payload.URL,
+		Description: payload.Description,
+		WordCount: payload.WordCount,
+		PartOfFullSize: payload.PartOfFullSize,
+		Vec: payload.Vec,
 	}
 	return doc, err
 }

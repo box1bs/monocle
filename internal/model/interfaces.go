@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -19,6 +20,11 @@ type Indexer interface {
 type Logger interface {
 	Write(string)
 	Close()
+}
+
+type Vectorizer interface {
+	Vectorize(string) ([]float64, error)
+	SetContext(context.Context, time.Duration)
 }
 
 type Repository interface {

@@ -62,7 +62,7 @@ func NewSpider(baseURL string, maxDepth, maxLinksInPage int, mp *sync.Map, wp *w
 	}
 }
 
-func (ws *webSpider) CrawlWithContext(ctx context.Context, canc context.CancelFunc, currentURL string, idx model.Indexer, parent *tree.TreeNode, depth int) {
+func (ws *webSpider) CrawlWithContext(ctx context.Context, canc context.CancelFunc, currentURL string, idx model.Indexer, vec model.Vectorizer, parent *tree.TreeNode, depth int) {
 	defer canc()
     select {
 	case <-ctx.Done():
@@ -121,7 +121,7 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, canc context.CancelFu
                 }
 				c, cancel := context.WithTimeout(idx.GetContext(), 90 * time.Second)
                 ws.Pool.Submit(func() {
-                    ws.CrawlWithContext(c, cancel, link, idx, child, depth+1)
+                    ws.CrawlWithContext(c, cancel, link, idx, vec, child, depth+1)
                 })
             }
         }
@@ -149,6 +149,13 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, canc context.CancelFu
 	var content string
     document.Description, links, content = parseHTMLStream(c, doc, currentURL, userAgent, ws.maxLinksInPage, ws.onlySameDomain, parent.GetRules())
 
+	vec.SetContext(ctx, 15 * time.Second)
+	document.Vec, err = vec.Vectorize(content)
+	if err != nil {
+		log.Printf("error vectorizing page: %s with error %d\n", currentURL, err)
+		return
+	}
+
 	words, err := idx.HandleDocumentWords(content)
 	if err != nil {
 		return
@@ -174,7 +181,7 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, canc context.CancelFu
             }
             c, cancel := context.WithTimeout(idx.GetContext(), 90 * time.Second)
             ws.Pool.Submit(func() {
-                ws.CrawlWithContext(c, cancel, link, idx, child, depth+1)
+                ws.CrawlWithContext(c, cancel, link, idx, vec, child, depth+1)
             })
         }
     }

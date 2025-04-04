@@ -29,9 +29,10 @@ type SearchIndex struct {
 	UrlsCrawled int32
 	AvgLen	 	float64
 	quitCTX		context.Context
+	vectorizer   model.Vectorizer
 }
 
-func NewSearchIndex(stemmer model.Stemmer, stopWords model.StopWords, l model.Logger, ir model.Repository, context context.Context) *SearchIndex {
+func NewSearchIndex(stemmer model.Stemmer, stopWords model.StopWords, l model.Logger, ir model.Repository, context context.Context, v model.Vectorizer) *SearchIndex {
 	return &SearchIndex{
 		mu: new(sync.RWMutex),
 		stopWords: stopWords,
@@ -40,6 +41,7 @@ func NewSearchIndex(stemmer model.Stemmer, stopWords model.StopWords, l model.Lo
 		logger: l,
 		quitCTX: context,
 		indexRepos: ir,
+		vectorizer: v,
 	}
 }
 
@@ -60,7 +62,7 @@ func (idx *SearchIndex) Index(config *configs.ConfigData) error {
 		idx.root.AddChild(node)
         spider := web.NewSpider(url, config.MaxDepth, config.MaxLinksInPage, mp, wp, config.OnlySameDomain, rl)
         spider.Pool.Submit(func() {
-            spider.CrawlWithContext(ctx, cancel, url, idx, node, 0)
+            spider.CrawlWithContext(ctx, cancel, url, idx, idx.vectorizer, node, 0)
         })
     }
 	wp.Wait()
@@ -72,7 +74,7 @@ type requestRanking struct {
 	includesWords 	int
 	tf_idf 			float64
 	bm25 			float64
-	//relation 		float64
+	cos 			float64
 	//any ranking scores
 }
 
@@ -107,11 +109,6 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 	terms, err := idx.indexRepos.TransferOrSaveToSequence(queryTerms, false)
 	if err != nil || len(terms) == 0 {
 		return nil
-	}
-
-	minQueryTermsCount := len(terms) / 2
-	if minQueryTermsCount < 1 {
-		minQueryTermsCount = 1 // At least 1 term should match
 	}
 
 	index := make(map[int]map[uuid.UUID]int)
@@ -151,6 +148,7 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 			r.includesWords++
 			r.tf_idf += float64(freq) / doc.GetFullSize() * idf
 			r.bm25 += culcBM25(idf, float64(freq), doc, idx.AvgLen)
+			idx.vectorizer.SetContext(idx.quitCTX, 10 * time.Second)
 			rank[docID] = r
 
 			if _, ex := alreadyIncluded[docID]; ex {
@@ -161,11 +159,19 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 		}
 	}
 
+	vec, err := idx.vectorizer.Vectorize(query)
+	if err != nil {
+		log.Println(err)
+		return nil
+	}
+
 	filteredResult := make([]*model.Document, 0)
 	for _, doc := range result {
 		r := rank[doc.Id]
+		r.cos = calcCosineSimilarity(doc.Vec, vec)
+		rank[doc.Id] = r
 
-		if r.includesWords >= minQueryTermsCount && r.tf_idf >= quorum {
+		if r.tf_idf >= quorum {
 			filteredResult = append(filteredResult, doc)
 		}
 	}
@@ -176,11 +182,35 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 	}
 
 	sort.Slice(result, func(i, j int) bool {
-		return rank[result[i].Id].includesWords > rank[result[j].Id].includesWords || rank[result[i].Id].includesWords == rank[result[j].Id].includesWords && 
+		return rank[result[i].Id].cos > rank[result[j].Id].cos ||
+		 rank[result[i].Id].includesWords > rank[result[j].Id].includesWords ||
+		  rank[result[i].Id].includesWords == rank[result[j].Id].includesWords && 
 		(rank[result[i].Id].bm25 > rank[result[j].Id].bm25 || rank[result[i].Id].tf_idf > rank[result[j].Id].tf_idf)
 	})
 
 	return result[:min(length, maxLen)]
+}
+
+func calcCosineSimilarity(vec1, vec2 []float64) float64 {
+	if len(vec1) != len(vec2) {
+		return 0.0
+	}
+
+	dotProduct := 0.0
+	magnitude1 := 0.0
+	magnitude2 := 0.0
+
+	for i := range vec1 {
+		dotProduct += vec1[i] * vec2[i]
+		magnitude1 += vec1[i] * vec1[i]
+		magnitude2 += vec2[i] * vec2[i]
+	}
+
+	if magnitude1 == 0 || magnitude2 == 0 {
+		return 0.0
+	}
+
+	return dotProduct / (math.Sqrt(magnitude1) * math.Sqrt(magnitude2))
 }
 
 func culcBM25(idf float64, tf float64, doc *model.Document, avgLen float64) float64 {
