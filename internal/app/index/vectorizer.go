@@ -1,11 +1,11 @@
 package index
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -18,7 +18,14 @@ type VecResponce struct {
 }
 
 func (v *Vectorizer) Vectorize(text string, ctx context.Context) ([]float64, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1:50920/vectorize", strings.NewReader(text))
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(map[string]string{
+		"text": text,
+	}); err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1:50920/vectorize", &buf)
 	if err != nil {
 		return nil, err
 	}

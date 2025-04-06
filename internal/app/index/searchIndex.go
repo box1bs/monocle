@@ -186,14 +186,20 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 		return nil
 	}
 
-	sort.Slice(result, func(i, j int) bool {
-		return rank[result[i].Id].cos > rank[result[j].Id].cos ||
-		 rank[result[i].Id].includesWords > rank[result[j].Id].includesWords ||
-		  rank[result[i].Id].includesWords == rank[result[j].Id].includesWords && 
-		(rank[result[i].Id].bm25 > rank[result[j].Id].bm25 || rank[result[i].Id].tf_idf > rank[result[j].Id].tf_idf)
+	sort.Slice(filteredResult, func(i, j int) bool {
+		if rank[filteredResult[i].Id].cos != rank[filteredResult[j].Id].cos {
+			return rank[filteredResult[i].Id].cos > rank[filteredResult[j].Id].cos
+		}
+		if rank[filteredResult[i].Id].includesWords != rank[filteredResult[j].Id].includesWords {
+			return rank[filteredResult[i].Id].includesWords > rank[filteredResult[j].Id].includesWords
+		}
+		if rank[filteredResult[i].Id].bm25 != rank[filteredResult[j].Id].bm25 {
+			return rank[filteredResult[i].Id].bm25 > rank[filteredResult[j].Id].bm25
+		}
+		return rank[filteredResult[i].Id].tf_idf > rank[filteredResult[j].Id].tf_idf
 	})
 
-	return result[:min(length, maxLen)]
+	return filteredResult[:min(length, maxLen)]
 }
 
 func calcCosineSimilarity(vec1, vec2 []float64) float64 {
