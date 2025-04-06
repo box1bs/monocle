@@ -100,7 +100,7 @@ func (s *server) startCrawlHandler(w http.ResponseWriter, r *http.Request) {
 		Rate:           req.Rate,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	idx := index.NewSearchIndex(stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), s.logger, s.indexRepos, ctx, index.NewVectorizer(ctx))
+	idx := index.NewSearchIndex(stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), s.logger, s.indexRepos, ctx, index.NewVectorizer())
 	job := &jobInfo{
 		id:            	jobID,
 		index:         	idx,

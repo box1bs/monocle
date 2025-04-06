@@ -87,7 +87,7 @@ func runCliMode(configPath, pathTolocalLog string, ir model.Repository) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	i := index.NewSearchIndex(stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), logger, ir, ctx, index.NewVectorizer(ctx))
+	i := index.NewSearchIndex(stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), logger, ir, ctx, index.NewVectorizer())
 	if err := i.Index(cfg); err != nil {
 		panic(err)
 	}

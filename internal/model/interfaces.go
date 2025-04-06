@@ -3,7 +3,6 @@ package model
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -23,8 +22,7 @@ type Logger interface {
 }
 
 type Vectorizer interface {
-	Vectorize(string) ([]float64, error)
-	SetContext(context.Context, time.Duration)
+	Vectorize(string, context.Context) ([]float64, error)
 }
 
 type Repository interface {

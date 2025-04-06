@@ -109,21 +109,19 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, canc context.CancelFu
 				return
 			default:
 			}
-            if normalized, err := normalizeUrl(link); err == nil && !ws.isVisited(normalized) {
-                child := tree.NewNode(link)
-                parent.AddChild(child)
-				same, err := isSameOrigin(ws.baseURL, link)
-				if err != nil {
-					continue
-				}
-                if ws.onlySameDomain || same {
-                    child.SetRules(parent.GetRules())
-                }
-				c, cancel := context.WithTimeout(idx.GetContext(), 90 * time.Second)
-                ws.Pool.Submit(func() {
-                    ws.CrawlWithContext(c, cancel, link, idx, vec, child, depth+1)
-                })
+            child := tree.NewNode(link)
+            parent.AddChild(child)
+			same, err := isSameOrigin(ws.baseURL, link)
+			if err != nil {
+				continue
+			}
+            if ws.onlySameDomain || same {
+                child.SetRules(parent.GetRules())
             }
+			c, cancel := context.WithTimeout(idx.GetContext(), 90 * time.Second)
+            ws.Pool.Submit(func() {
+                ws.CrawlWithContext(c, cancel, link, idx, vec, child, depth+1)
+            })
         }
     }
 
@@ -147,10 +145,11 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, canc context.CancelFu
 	defer cancel()
 	var links []string
 	var content string
-    document.Description, links, content = parseHTMLStream(c, doc, currentURL, userAgent, ws.maxLinksInPage, ws.onlySameDomain, parent.GetRules())
+    document.Description, links, content = ws.parseHTMLStream(c, doc, currentURL, userAgent, parent.GetRules())
 
-	vec.SetContext(ctx, 15 * time.Second)
-	document.Vec, err = vec.Vectorize(content)
+	c, cancel = context.WithTimeout(ctx, time.Second * 15)
+	defer cancel()
+	document.Vec, err = vec.Vectorize(content, c)
 	if err != nil {
 		log.Printf("error vectorizing page: %s with error %d\n", currentURL, err)
 		return
@@ -169,21 +168,19 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, canc context.CancelFu
 			return
 		default:
 		}
-        if normalized, err := normalizeUrl(link); err == nil && !ws.isVisited(normalized) {
-            child := tree.NewNode(link)
-            parent.AddChild(child)
-			same, err := isSameOrigin(ws.baseURL, link)
-			if err != nil {
-				continue
-			}
-            if ws.onlySameDomain || same {
-                child.SetRules(parent.GetRules())
-            }
-            c, cancel := context.WithTimeout(idx.GetContext(), 90 * time.Second)
-            ws.Pool.Submit(func() {
-                ws.CrawlWithContext(c, cancel, link, idx, vec, child, depth+1)
-            })
+        child := tree.NewNode(link)
+        parent.AddChild(child)
+		same, err := isSameOrigin(ws.baseURL, link)
+		if err != nil {
+			continue
+		}
+        if ws.onlySameDomain || same {
+            child.SetRules(parent.GetRules())
         }
+        c, cancel := context.WithTimeout(idx.GetContext(), 90 * time.Second)
+        ws.Pool.Submit(func() {
+        ws.CrawlWithContext(c, cancel, link, idx, vec, child, depth+1)
+        })
     }
 }
 
@@ -270,12 +267,12 @@ func cleanUTMParams(rawURL *url.URL) *url.URL {
 	return rawURL
 }
 
-func parseHTMLStream(ctx context.Context, htmlContent, baseURL, userAgent string, maxLinks int, onlySameOrigin bool, rules *parser.RobotsTxt) (description string, links []string, fullText string) {
+func (ws *webSpider) parseHTMLStream(ctx context.Context, htmlContent, baseURL, userAgent string, rules *parser.RobotsTxt) (description string, links []string, fullText string) {
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
 	var metaDesc, ogDesc, firstParagraph string
 	var inParagraph, inScriptOrStyle bool
 	var fullTextBuilder strings.Builder
-	links = make([]string, 0, maxLinks)
+	links = make([]string, 0, ws.maxLinksInPage)
 
 	tokenCount := 0
     const checkContextEvery = 20
@@ -346,7 +343,14 @@ func parseHTMLStream(ctx context.Context, htmlContent, baseURL, userAgent string
 						if err != nil {
 							break
 						}
-						if link != "" && len(links) < maxLinks {
+						if link != "" && len(links) < ws.maxLinksInPage {
+							normalized, err := normalizeUrl(link)
+							if err != nil {
+								break
+							}
+							if ws.isVisited(normalized) {
+								break
+							}
 							if rules != nil {
 								uri, err := url.Parse(link)
 								if err != nil {
@@ -356,7 +360,7 @@ func parseHTMLStream(ctx context.Context, htmlContent, baseURL, userAgent string
 									break
 								}
 							}
-							if onlySameOrigin {
+							if ws.onlySameDomain {
 								same, err := isSameOrigin(link, baseURL)
 								if err != nil {
 									break

@@ -1,7 +1,6 @@
 package index
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,27 +10,15 @@ import (
 )
 
 type Vectorizer struct {
-	ctx    context.Context
 	client *http.Client
-}
-
-type VecRequest struct {
-	Words 	[]string 	`json:"words"`
 }
 
 type VecResponce struct {
 	Vec 	[]float64 	`json:"vec"`
 }
 
-func (v *Vectorizer) Vectorize(text string) ([]float64, error) {
-	tokens := strings.Split(text, " ")
-
-	var buf bytes.Buffer
-	json.NewEncoder(&buf).Encode(VecRequest{
-		Words: tokens[:min(len(tokens), 512)],
-	})
-
-	req, err := http.NewRequestWithContext(v.ctx, http.MethodPost, "http://127.0.0.1:50920/vectorize", &buf)
+func (v *Vectorizer) Vectorize(text string, ctx context.Context) ([]float64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1:50920/vectorize", strings.NewReader(text))
 	if err != nil {
 		return nil, err
 	}
@@ -55,16 +42,11 @@ func (v *Vectorizer) Vectorize(text string) ([]float64, error) {
 	return vecResponce.Vec, nil
 }
 
-func NewVectorizer(ctx context.Context) *Vectorizer {
+func NewVectorizer() *Vectorizer {
 	client := &http.Client{
 		Timeout: 15 * time.Second,
 	}
 	return &Vectorizer{
-		ctx:    ctx,
 		client: client,
 	}
-}
-
-func (v *Vectorizer) SetContext(parent context.Context, timeout time.Duration) {
-	v.ctx, _ = context.WithTimeout(parent, timeout)
 }

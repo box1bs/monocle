@@ -29,10 +29,10 @@ type SearchIndex struct {
 	UrlsCrawled int32
 	AvgLen	 	float64
 	quitCTX		context.Context
-	vectorizer   model.Vectorizer
+	vectorizer  *Vectorizer
 }
 
-func NewSearchIndex(stemmer model.Stemmer, stopWords model.StopWords, l model.Logger, ir model.Repository, context context.Context, v model.Vectorizer) *SearchIndex {
+func NewSearchIndex(stemmer model.Stemmer, stopWords model.StopWords, l model.Logger, ir model.Repository, context context.Context, v *Vectorizer) *SearchIndex {
 	return &SearchIndex{
 		mu: new(sync.RWMutex),
 		stopWords: stopWords,
@@ -120,7 +120,7 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 		}
 		index[term] = mp
 	}
-	
+
 	result := make([]*model.Document, 0)
 	alreadyIncluded := make(map[uuid.UUID]struct{})
 	for _, term := range terms {
@@ -148,7 +148,6 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 			r.includesWords++
 			r.tf_idf += float64(freq) / doc.GetFullSize() * idf
 			r.bm25 += culcBM25(idf, float64(freq), doc, idx.AvgLen)
-			idx.vectorizer.SetContext(idx.quitCTX, 10 * time.Second)
 			rank[docID] = r
 
 			if _, ex := alreadyIncluded[docID]; ex {
@@ -159,7 +158,13 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 		}
 	}
 
-	vec, err := idx.vectorizer.Vectorize(query)
+	if len(result) == 0 {
+		return nil
+	}
+
+	c, cancel := context.WithTimeout(idx.quitCTX, 5 * time.Second)
+	defer cancel()
+	vec, err := idx.vectorizer.Vectorize(query, c)
 	if err != nil {
 		log.Println(err)
 		return nil
@@ -168,10 +173,10 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 	filteredResult := make([]*model.Document, 0)
 	for _, doc := range result {
 		r := rank[doc.Id]
-		r.cos = calcCosineSimilarity(doc.Vec, vec)
-		rank[doc.Id] = r
 
 		if r.tf_idf >= quorum {
+			r.cos = calcCosineSimilarity(doc.Vec, vec)
+			rank[doc.Id] = r
 			filteredResult = append(filteredResult, doc)
 		}
 	}
