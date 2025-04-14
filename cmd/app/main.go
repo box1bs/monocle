@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"time"
 
 	"strings"
 	"syscall"
@@ -102,7 +103,9 @@ func runCliMode(configPath, pathTolocalLog string, ir model.Repository) {
 		if query == "q" {
 			return
 		}
+		t := time.Now()
 		Present(i.Search(query, 0.01, 50))
+		fmt.Printf("--Search time: %v--\n", time.Since(t))
 	}
 }
 

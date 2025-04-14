@@ -122,51 +122,61 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 	}
 
 	result := make([]*model.Document, 0)
-	alreadyIncluded := make(map[uuid.UUID]struct{})
+	var wg sync.WaitGroup
+	var rankMu sync.Mutex
+	var resultMu sync.Mutex
+	errCh := make(chan error, len(terms))
+	
 	for _, term := range terms {
-		lenght, err := idx.indexRepos.GetDocumentsCount()
-		if err != nil {
-			log.Println(err)
-			return nil
-		}
-		idf := math.Log(float64(lenght) / float64(len(index[term]) + 1)) + 1.0
-		
-		for docID, freq := range index[term] {
-			doc, err := idx.indexRepos.GetDocumentByID(docID)
+		wg.Add(1)
+		go func(term int) {
+			defer wg.Done()
+	
+			length, err := idx.indexRepos.GetDocumentsCount()
 			if err != nil {
-				log.Println(err)
-				continue
+				errCh <- err
+				return
 			}
-			if doc == nil {
-				continue
+			idf := math.Log(float64(length)/float64(len(index[term])+1)) + 1.0
+	
+			for docID, freq := range index[term] {
+				doc, err := idx.indexRepos.GetDocumentByID(docID)
+				if err != nil || doc == nil {
+					continue
+				}
+				
+				rankMu.Lock()
+				r, ex := rank[docID]
+				if !ex {
+					rank[docID] = requestRanking{}
+				}
+				r.includesWords++
+				r.tf_idf += float64(freq) / doc.GetFullSize() * idf
+				r.bm25 += culcBM25(idf, float64(freq), doc, idx.AvgLen)
+				rank[docID] = r
+				rankMu.Unlock()
+	
+				resultMu.Lock()
+				result = append(result, doc)
+				resultMu.Unlock()
 			}
-
-			r, ex := rank[docID]
-			if !ex {
-				rank[docID] = requestRanking{}
-			}
-			r.includesWords++
-			r.tf_idf += float64(freq) / doc.GetFullSize() * idf
-			r.bm25 += culcBM25(idf, float64(freq), doc, idx.AvgLen)
-			rank[docID] = r
-
-			if _, ex := alreadyIncluded[docID]; ex {
-				continue
-			}
-			alreadyIncluded[docID] = struct{}{}
-			result = append(result, doc)
-		}
+		}(term)
 	}
-
-	if len(result) == 0 {
-		return nil
-	}
-
+	
+	go func() {
+		wg.Wait()
+		close(errCh)
+	}()
+	
 	c, cancel := context.WithTimeout(idx.quitCTX, 5 * time.Second)
 	defer cancel()
 	vec, err := idx.vectorizer.Vectorize(query, c)
 	if err != nil {
 		log.Println(err)
+		return nil
+	}
+
+	if err := <-errCh; err != nil {
 		return nil
 	}
 
