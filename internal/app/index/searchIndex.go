@@ -137,7 +137,7 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 				errCh <- err
 				return
 			}
-			idf := math.Log(float64(length)/float64(len(index[term])+1)) + 1.0
+			idf := math.Log(float64(length) / float64(len(index[term]) + 1)) + 1.0
 	
 			for docID, freq := range index[term] {
 				doc, err := idx.indexRepos.GetDocumentByID(docID)

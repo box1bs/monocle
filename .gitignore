@@ -4,9 +4,4 @@ logs/*.txt
 
 main.exe
 
-.Dockerignore
-Dockerfile
 dataset.csv
-
-internal/app/ramking/model/Dockerfile
-internal/app/ramking/model/.Dockerignore

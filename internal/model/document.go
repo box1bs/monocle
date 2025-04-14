@@ -3,11 +3,11 @@ package model
 import "github.com/google/uuid"
 
 type Document struct {
-	Id      		uuid.UUID	`json:"id"`
-	URL     		string		`json:"url"`
-	Description 	string		`json:"description"`
+	Id 				uuid.UUID	`json:"id"`
+	URL				string		`json:"url"`
+	Description		string		`json:"description"`
 	WordCount 		int			`json:"words_count"`
-	PartOfFullSize 	float64		`json:"part_of_full_size"`
+	PartOfFullSize	float64		`json:"part_of_full_size"`
 	Vec 			[]float64	`json:"vec"`
 }
 
