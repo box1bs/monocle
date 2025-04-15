@@ -2,6 +2,8 @@ package model
 
 import (
 	"context"
+	"encoding/pem"
+	"net/http"
 	"sync"
 
 	"github.com/google/uuid"
@@ -45,6 +47,13 @@ type Repository interface {
 
 type Stemmer interface {
 	Stem(string) string
+}
+
+type Encryptor interface {
+	DecryptAESKey(string) error
+	GetPublicKey() (*pem.Block, error)
+	EncryptRSA([]byte) ([]byte, error)
+	DecryptMiddleware(http.Handler) http.Handler
 }
 
 type StopWords interface {

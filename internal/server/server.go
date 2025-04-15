@@ -3,6 +3,7 @@ package srv
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"log"
 	"net/http"
@@ -22,6 +23,7 @@ type server struct {
 	logger         	model.Logger
 	indexInstances 	map[string]*index.SearchIndex
 	indexRepos		model.Repository
+	encryptor 		model.Encryptor
 }
 
 type jobInfo struct {
@@ -198,17 +200,58 @@ func (s *server) searchHandler(w http.ResponseWriter, r *http.Request) {
 			Description: results[i].Description,
 		})
 	}
-	response := SearchResponse{Results: responseResults}
+	respBytes, err := json.Marshal(responseResults)
+	if err != nil {
+		http.Error(w, "Failed to marshal response", http.StatusInternalServerError)
+		return
+	}
+	encrypted, err := s.encryptor.EncryptRSA(respBytes)
+	if err != nil {
+		http.Error(w, "Failed to encrypt response", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(encrypted)
 }
 
-func StartServer(port int, logger model.Logger, ir model.Repository) error {
+func StartServer(port int, logger model.Logger, ir model.Repository, enc model.Encryptor) error {
 	s := NewSaturdayServer(logger, ir)
-	http.HandleFunc("POST /crawl/start", s.startCrawlHandler)
-	http.HandleFunc("POST /crawl/stop", s.stopCrawlHandler)
-	http.HandleFunc("GET /crawl/status", s.getCrawlStatusHandler)
-	http.HandleFunc("POST /search", s.searchHandler)
+	http.Handle("GET /public", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pemBlock, err := s.encryptor.GetPublicKey()
+		if err != nil {
+			http.Error(w, "Failed to get public key", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-pem-file")
+		if err := pem.Encode(w, pemBlock); err != nil {
+			http.Error(w, "Failed to encode public key", http.StatusInternalServerError)
+			return
+		}
+	}))
+	http.HandleFunc("POST /aes", func(w http.ResponseWriter, r *http.Request) {
+		var encryptedKey string
+		if err := json.NewDecoder(r.Body).Decode(&encryptedKey); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := s.encryptor.DecryptAESKey(encryptedKey); err != nil {
+			http.Error(w, "Failed to decrypt AES key", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	http.HandleFunc("POST /crawl/start", func(w http.ResponseWriter, r *http.Request) {
+		s.encryptor.DecryptMiddleware(http.HandlerFunc(s.startCrawlHandler)).ServeHTTP(w, r)
+	})
+	http.HandleFunc("POST /crawl/stop", func(w http.ResponseWriter, r *http.Request) {
+		s.encryptor.DecryptMiddleware(http.HandlerFunc(s.stopCrawlHandler)).ServeHTTP(w, r)
+	})
+	http.HandleFunc("GET /crawl/status", func(w http.ResponseWriter, r *http.Request) {
+		s.encryptor.DecryptMiddleware(http.HandlerFunc(s.getCrawlStatusHandler)).ServeHTTP(w, r)
+	})
+	http.HandleFunc("POST /search", func(w http.ResponseWriter, r *http.Request) {
+		s.encryptor.DecryptMiddleware(http.HandlerFunc(s.searchHandler)).ServeHTTP(w, r)
+	})
 	addr := fmt.Sprintf(":%d", port)
 	view.PrintLogo()
 	log.Printf("REST API started at %d\n", port)

@@ -15,6 +15,7 @@ import (
 
 	"github.com/box1bs/Saturday/configs"
 	"github.com/box1bs/Saturday/internal/app/index"
+	"github.com/box1bs/Saturday/internal/encrypt"
 	"github.com/box1bs/Saturday/internal/model"
 	"github.com/box1bs/Saturday/internal/repository"
 	srv "github.com/box1bs/Saturday/internal/server"
@@ -53,9 +54,14 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
+	enc, err := encrypt.NewEncryptor()
+	if err != nil {
+		panic(err)
+	}
+
 	errChan := make(chan error)
 	go func() {
-		errChan <- srv.StartServer(*httpPort, al, ir)
+		errChan <- srv.StartServer(*httpPort, al, ir, enc)
 	}()
 
 	select {
