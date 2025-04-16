@@ -25,6 +25,7 @@ func NewEncryptor() (*encryptor, error) {
 		private: private,
 	}, nil
 }
+
 func (e *encryptor) GetPublicKey() (*pem.Block, error) {
 	publicKeyBytes := x509.MarshalPKCS1PublicKey(e.public)
 	pemBlock := &pem.Block{

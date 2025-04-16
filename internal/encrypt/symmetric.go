@@ -29,7 +29,7 @@ func (e *encryptor) DecryptMiddleware(next http.Handler) http.Handler {
 }
 
 
-func (e *encryptor) EncryptRSA(response []byte) ([]byte, error) {
+func (e *encryptor) EncryptAES(response []byte) ([]byte, error) {
 	block, err := aes.NewCipher(e.aesKey)
 	if err != nil {
 		return nil, err

@@ -85,6 +85,21 @@ type SearchResponse struct {
 	Results []SearchResult `json:"results"`
 }
 
+func (s *server) ecnryptResponse(w http.ResponseWriter, response any) {
+	data, err := json.Marshal(response)
+	if err != nil {
+		http.Error(w, "Failed to marshal response", http.StatusInternalServerError)
+		return
+	}
+	encrypted, err := s.encryptor.EncryptAES(data)
+	if err != nil {
+		http.Error(w, "Failed to encrypt response", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(encrypted)
+}
+
 func (s *server) startCrawlHandler(w http.ResponseWriter, r *http.Request) {
 	var req CrawlRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -109,12 +124,10 @@ func (s *server) startCrawlHandler(w http.ResponseWriter, r *http.Request) {
 		status:        	"initializing",
 		cancel: 		cancel,
 	}
-
 	s.jobsMutex.Lock()
 	s.activeJobs[jobID] = job
 	s.indexInstances[jobID] = idx
 	s.jobsMutex.Unlock()
-
 	go func() {
 		s.jobsMutex.Lock()
 		job.status = "running"
@@ -130,10 +143,8 @@ func (s *server) startCrawlHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		s.jobsMutex.Unlock()
 	}()
-
 	response := CrawlResponse{JobId: jobID, Status: "started"}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	s.ecnryptResponse(w, response)
 }
 
 func (s *server) stopCrawlHandler(w http.ResponseWriter, r *http.Request) {
@@ -147,7 +158,7 @@ func (s *server) stopCrawlHandler(w http.ResponseWriter, r *http.Request) {
 	s.jobsMutex.RUnlock()
 
 	if !exists {
-		json.NewEncoder(w).Encode(StopResponse{Status: "not_found"})
+		s.ecnryptResponse(w, StopResponse{Status: "not_found"})
 		return
 	}
 
@@ -155,7 +166,7 @@ func (s *server) stopCrawlHandler(w http.ResponseWriter, r *http.Request) {
 	s.jobsMutex.Lock()
 	job.status = "stopping"
 	s.jobsMutex.Unlock()
-	json.NewEncoder(w).Encode(StopResponse{Status: "stopping"})
+	s.ecnryptResponse(w, StopResponse{Status: "stopped"})
 }
 
 func (s *server) getCrawlStatusHandler(w http.ResponseWriter, r *http.Request) {
@@ -168,15 +179,14 @@ func (s *server) getCrawlStatusHandler(w http.ResponseWriter, r *http.Request) {
 	job, exists := s.activeJobs[jobId]
 	s.jobsMutex.RUnlock()
 	if !exists {
-		json.NewEncoder(w).Encode(StatusResponse{Status: "not_found"})
+		s.ecnryptResponse(w, StatusResponse{Status: "not_found"})
 		return
 	}
 	response := StatusResponse{
 		Status:       job.status,
 		PagesCrawled: int(job.index.UrlsCrawled),
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	s.ecnryptResponse(w, response)
 }
 
 func (s *server) searchHandler(w http.ResponseWriter, r *http.Request) {
@@ -200,18 +210,7 @@ func (s *server) searchHandler(w http.ResponseWriter, r *http.Request) {
 			Description: results[i].Description,
 		})
 	}
-	respBytes, err := json.Marshal(responseResults)
-	if err != nil {
-		http.Error(w, "Failed to marshal response", http.StatusInternalServerError)
-		return
-	}
-	encrypted, err := s.encryptor.EncryptRSA(respBytes)
-	if err != nil {
-		http.Error(w, "Failed to encrypt response", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(encrypted)
+	s.ecnryptResponse(w, responseResults)
 }
 
 func StartServer(port int, logger model.Logger, ir model.Repository, enc model.Encryptor) error {

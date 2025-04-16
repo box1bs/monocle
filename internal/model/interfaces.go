@@ -52,7 +52,7 @@ type Stemmer interface {
 type Encryptor interface {
 	DecryptAESKey(string) error
 	GetPublicKey() (*pem.Block, error)
-	EncryptRSA([]byte) ([]byte, error)
+	EncryptAES([]byte) ([]byte, error)
 	DecryptMiddleware(http.Handler) http.Handler
 }
 
