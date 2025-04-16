@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"fmt"
 )
 
 type encryptor struct {
@@ -16,7 +17,7 @@ type encryptor struct {
 }
 
 func NewEncryptor() (*encryptor, error) {
-	private, err := rsa.GenerateKey(rand.Reader, 2048)
+	private, err := rsa.GenerateKey(rand.Reader, 3072)
 	if err != nil {
 		return nil, err
 	}
@@ -27,7 +28,10 @@ func NewEncryptor() (*encryptor, error) {
 }
 
 func (e *encryptor) GetPublicKey() (*pem.Block, error) {
-	publicKeyBytes := x509.MarshalPKCS1PublicKey(e.public)
+	publicKeyBytes, err := x509.MarshalPKIXPublicKey(e.public)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal public key: %w", err)
+	}
 	pemBlock := &pem.Block{
         Type:  "RSA PUBLIC KEY",
         Bytes: publicKeyBytes,
@@ -35,11 +39,11 @@ func (e *encryptor) GetPublicKey() (*pem.Block, error) {
 	return pemBlock, nil
 }
 
-func (e *encryptor) DecryptAESKey(encryptedKey string) (err error) {
+func (e *encryptor) DecryptAESKey(encryptedKey string) error {
 	ciphertext, err := base64.StdEncoding.DecodeString(encryptedKey)
     if err != nil {
-        return
+        return fmt.Errorf("failed to decode base64: %w", err)
     }
 	e.aesKey, err = rsa.DecryptOAEP(sha256.New(), rand.Reader, e.private, ciphertext, []byte(""))
-	return
+	return err
 }

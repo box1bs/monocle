@@ -8,24 +8,34 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 )
 
 func (e *encryptor) DecryptMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var requestBody []byte
-		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-		ciphertext, err := e.decryptAES(requestBody)
-		if err != nil {
-			http.Error(w, "Decryption failed", http.StatusInternalServerError)
-			return
-		}
-		r.Body = io.NopCloser(bytes.NewReader(ciphertext))
-		next.ServeHTTP(w, r)
-	})
+        var requestBody []byte
+        if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+            http.Error(w, "Invalid request body format", http.StatusBadRequest)
+            return
+        }
+
+        ciphertext, err := e.decryptAES(requestBody)
+        if err != nil {
+            if err.Error() == "cipher: message authentication failed" {
+                log.Printf("Integrity check failed: %v", err)
+                http.Error(w, "Decryption failed: integrity check failed", http.StatusForbidden)
+                return
+            }
+
+            log.Printf("Decryption error: %v", err)
+            http.Error(w, "Decryption failed", http.StatusInternalServerError)
+            return
+        }
+
+        r.Body = io.NopCloser(bytes.NewReader(ciphertext))
+        next.ServeHTTP(w, r)
+    })
 }
 
 
