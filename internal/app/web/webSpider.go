@@ -179,7 +179,7 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, canc context.CancelFu
         }
         c, cancel := context.WithTimeout(idx.GetContext(), 90 * time.Second)
         ws.Pool.Submit(func() {
-        ws.CrawlWithContext(c, cancel, link, idx, vec, child, depth+1)
+        	ws.CrawlWithContext(c, cancel, link, idx, vec, child, depth+1)
         })
     }
 }

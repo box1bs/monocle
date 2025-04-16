@@ -32,7 +32,6 @@ type Repository interface {
 	SaveVisitedUrls(*sync.Map) error
 	IndexDocument(uuid.UUID, []int) error
 	GetDocumentsByWord(int) (map[uuid.UUID]int, error)
-	//DebugPrintKeys(string) error	//only for debug
 
 	SaveDocument(doc *Document) error
 	GetDocumentByID(uuid.UUID) (*Document, error)
@@ -40,9 +39,6 @@ type Repository interface {
 	GetDocumentsCount() (int, error)
 
 	TransferOrSaveToSequence([]string, bool) ([]int, error)
-	SequenceToWords([]int) ([]string, error)
-	GetLastId() (int, error)
-	GetCurrentVocab() (map[int]string, error)
 }
 
 type Stemmer interface {

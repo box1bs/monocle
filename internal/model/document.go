@@ -12,5 +12,5 @@ type Document struct {
 }
 
 func (d *Document) GetFullSize() float64 {
-	return float64(256.0 / d.PartOfFullSize)
+	return float64(512.0 / d.PartOfFullSize)
 }

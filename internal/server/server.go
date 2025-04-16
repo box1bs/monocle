@@ -81,10 +81,6 @@ type SearchResult struct {
 	Description string  `json:"description"`
 }
 
-type SearchResponse struct {
-	Results []SearchResult `json:"results"`
-}
-
 func (s *server) ecnryptResponse(w http.ResponseWriter, response any) {
 	data, err := json.Marshal(response)
 	if err != nil {
@@ -203,9 +199,9 @@ func (s *server) searchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	results := idx.Search(req.Query, 3.0, max(0, req.MaxResults))
-	var responseResults []SearchResult
+	var responseResults []*SearchResult
 	for i := range max(0, req.MaxResults) {
-		responseResults = append(responseResults, SearchResult{
+		responseResults = append(responseResults, &SearchResult{
 			Url:         results[i].URL,
 			Description: results[i].Description,
 		})
@@ -239,18 +235,10 @@ func StartServer(port int, logger model.Logger, ir model.Repository, enc model.E
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	http.HandleFunc("POST /crawl/start", func(w http.ResponseWriter, r *http.Request) {
-		s.encryptor.DecryptMiddleware(http.HandlerFunc(s.startCrawlHandler)).ServeHTTP(w, r)
-	})
-	http.HandleFunc("POST /crawl/stop", func(w http.ResponseWriter, r *http.Request) {
-		s.encryptor.DecryptMiddleware(http.HandlerFunc(s.stopCrawlHandler)).ServeHTTP(w, r)
-	})
-	http.HandleFunc("GET /crawl/status", func(w http.ResponseWriter, r *http.Request) {
-		s.encryptor.DecryptMiddleware(http.HandlerFunc(s.getCrawlStatusHandler)).ServeHTTP(w, r)
-	})
-	http.HandleFunc("POST /search", func(w http.ResponseWriter, r *http.Request) {
-		s.encryptor.DecryptMiddleware(http.HandlerFunc(s.searchHandler)).ServeHTTP(w, r)
-	})
+	http.Handle("/crawl/start", s.encryptor.DecryptMiddleware(http.HandlerFunc(s.startCrawlHandler)))
+	http.Handle("/crawl/stop", s.encryptor.DecryptMiddleware(http.HandlerFunc(s.stopCrawlHandler)))
+	http.Handle("/crawl/status", s.encryptor.DecryptMiddleware(http.HandlerFunc(s.getCrawlStatusHandler)))
+	http.Handle("/search", s.encryptor.DecryptMiddleware(http.HandlerFunc(s.searchHandler)))
 	addr := fmt.Sprintf(":%d", port)
 	view.PrintLogo()
 	log.Printf("REST API started at %d\n", port)

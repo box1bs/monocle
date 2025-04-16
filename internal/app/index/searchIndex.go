@@ -255,7 +255,7 @@ func (idx *SearchIndex) AddDocument(doc *model.Document, words []int) {
 	idx.indexRepos.IndexDocument(doc.Id, words)
 
 	doc.WordCount = len(words)
-	doc.PartOfFullSize = 256.0 / float64(doc.WordCount)
+	doc.PartOfFullSize = 512.0 / float64(doc.WordCount)
 
 	idx.indexRepos.SaveDocument(doc)
 }

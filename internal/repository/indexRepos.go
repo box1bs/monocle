@@ -15,24 +15,6 @@ type IndexRepository struct {
 	db *badger.DB
 }
 
-func (ir *IndexRepository) DebugPrintKeys(prefix string) error {
-    return ir.db.View(func(txn *badger.Txn) error {
-        it := txn.NewIterator(badger.DefaultIteratorOptions)
-        defer it.Close()
-        prefixBytes := []byte(prefix)
-        for it.Seek(prefixBytes); it.ValidForPrefix(prefixBytes); it.Next() {
-            item := it.Item()
-            key := item.Key()
-            fmt.Printf("Key: %s\n", string(key))
-            item.Value(func(val []byte) error {
-                fmt.Printf("Value: %s\n", string(val))
-                return nil
-            })
-        }
-        return nil
-    })
-}
-
 func NewIndexRepository(db *badger.DB) *IndexRepository {
 	return &IndexRepository{db: db}
 }
