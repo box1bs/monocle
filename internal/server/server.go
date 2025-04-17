@@ -2,6 +2,7 @@ package srv
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -15,30 +16,31 @@ import (
 	"github.com/box1bs/Saturday/internal/view"
 	"github.com/box1bs/Saturday/pkg/stemmer"
 	"github.com/google/uuid"
+	"github.com/rs/cors"
 )
 
 type server struct {
 	activeJobs     	map[string]*jobInfo
 	jobsMutex      	sync.RWMutex
 	logger         	model.Logger
-	indexInstances 	map[string]*index.SearchIndex
 	indexRepos		model.Repository
 	encryptor 		model.Encryptor
+	index         	*index.SearchIndex
 }
 
 type jobInfo struct {
 	id            	string
-	index         	*index.SearchIndex
 	status        	string
 	cancel 			context.CancelFunc
 }
 
-func NewSaturdayServer(logger model.Logger, ir model.Repository) *server {
+func NewSaturdayServer(logger model.Logger, ir model.Repository, enc model.Encryptor) *server {
 	return &server{
 		activeJobs:     make(map[string]*jobInfo),
 		logger:         logger,
-		indexInstances: make(map[string]*index.SearchIndex),
-		indexRepos: ir,
+		indexRepos: 	ir,
+		encryptor: enc,
+		index: 			index.NewSearchIndex(stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), logger, ir, index.NewVectorizer()),
 	}
 }
 
@@ -92,8 +94,9 @@ func (s *server) ecnryptResponse(w http.ResponseWriter, response any) {
 		http.Error(w, "Failed to encrypt response", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(encrypted)
+	b64 := base64.StdEncoding.EncodeToString(encrypted)
+   	w.Header().Set("Content-Type", "application/json")
+   	json.NewEncoder(w).Encode(map[string]string{"data": b64})
 }
 
 func (s *server) startCrawlHandler(w http.ResponseWriter, r *http.Request) {
@@ -113,23 +116,20 @@ func (s *server) startCrawlHandler(w http.ResponseWriter, r *http.Request) {
 		Rate:           req.Rate,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	idx := index.NewSearchIndex(stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), s.logger, s.indexRepos, ctx, index.NewVectorizer())
 	job := &jobInfo{
 		id:            	jobID,
-		index:         	idx,
 		status:        	"initializing",
 		cancel: 		cancel,
 	}
 	s.jobsMutex.Lock()
 	s.activeJobs[jobID] = job
-	s.indexInstances[jobID] = idx
 	s.jobsMutex.Unlock()
 	go func() {
 		s.jobsMutex.Lock()
 		job.status = "running"
 		s.jobsMutex.Unlock()
 
-		err := idx.Index(cfg)
+		err := s.index.Index(cfg, ctx)
 
 		s.jobsMutex.Lock()
 		if err != nil {
@@ -180,7 +180,7 @@ func (s *server) getCrawlStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	response := StatusResponse{
 		Status:       job.status,
-		PagesCrawled: int(job.index.UrlsCrawled),
+		PagesCrawled: int(s.index.UrlsCrawled),
 	}
 	s.ecnryptResponse(w, response)
 }
@@ -191,16 +191,9 @@ func (s *server) searchHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.jobsMutex.RLock()
-	idx, exists := s.indexInstances[req.JobId]
-	s.jobsMutex.RUnlock()
-	if !exists || idx == nil {
-		http.Error(w, "Search index isn't exist", http.StatusNotFound)
-		return
-	}
-	results := idx.Search(req.Query, 3.0, max(0, req.MaxResults))
+	results := s.index.Search(req.Query, 3.0, max(0, req.MaxResults))
 	var responseResults []*SearchResult
-	for i := range max(0, req.MaxResults) {
+	for i := range results {
 		responseResults = append(responseResults, &SearchResult{
 			Url:         results[i].URL,
 			Description: results[i].Description,
@@ -210,20 +203,23 @@ func (s *server) searchHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func StartServer(port int, logger model.Logger, ir model.Repository, enc model.Encryptor) error {
-	s := NewSaturdayServer(logger, ir)
-	http.Handle("GET /public", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := NewSaturdayServer(logger, ir, enc)
+	mux := http.NewServeMux()
+	mux.Handle("GET /public", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pemBlock, err := s.encryptor.GetPublicKey()
 		if err != nil {
+			log.Println(err)
 			http.Error(w, "Failed to get public key", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/x-pem-file")
 		if err := pem.Encode(w, pemBlock); err != nil {
+			log.Println(err)
 			http.Error(w, "Failed to encode public key", http.StatusInternalServerError)
 			return
 		}
 	}))
-	http.HandleFunc("POST /aes", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /aes", func(w http.ResponseWriter, r *http.Request) {
 		var encryptedKey string
 		if err := json.NewDecoder(r.Body).Decode(&encryptedKey); err != nil {
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -235,12 +231,17 @@ func StartServer(port int, logger model.Logger, ir model.Repository, enc model.E
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	http.Handle("/crawl/start", s.encryptor.DecryptMiddleware(http.HandlerFunc(s.startCrawlHandler)))
-	http.Handle("/crawl/stop", s.encryptor.DecryptMiddleware(http.HandlerFunc(s.stopCrawlHandler)))
-	http.Handle("/crawl/status", s.encryptor.DecryptMiddleware(http.HandlerFunc(s.getCrawlStatusHandler)))
-	http.Handle("/search", s.encryptor.DecryptMiddleware(http.HandlerFunc(s.searchHandler)))
+	mux.Handle("/crawl/start", s.encryptor.DecryptMiddleware(http.HandlerFunc(s.startCrawlHandler)))
+	mux.Handle("/crawl/stop", s.encryptor.DecryptMiddleware(http.HandlerFunc(s.stopCrawlHandler)))
+	mux.Handle("/crawl/status", s.encryptor.DecryptMiddleware(http.HandlerFunc(s.getCrawlStatusHandler)))
+	mux.Handle("/search", s.encryptor.DecryptMiddleware(http.HandlerFunc(s.searchHandler)))
+	c := cors.New(cors.Options{
+        AllowedOrigins:   []string{"*"},
+        AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+        AllowCredentials: true,
+    })
 	addr := fmt.Sprintf(":%d", port)
 	view.PrintLogo()
 	log.Printf("REST API started at %d\n", port)
-	return http.ListenAndServe(addr, nil)
+	return http.ListenAndServe(addr, c.Handler(mux))
 }

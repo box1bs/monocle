@@ -21,6 +21,7 @@ require (
 	github.com/google/flatbuffers v1.12.1 // indirect
 	github.com/klauspost/compress v1.12.3 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
+	github.com/rs/cors v1.11.1
 	go.opencensus.io v0.22.5 // indirect
 	golang.org/x/sys v0.30.0 // indirect
 )

@@ -62,7 +62,7 @@ func NewSpider(baseURL string, maxDepth, maxLinksInPage int, mp *sync.Map, wp *w
 	}
 }
 
-func (ws *webSpider) CrawlWithContext(ctx context.Context, canc context.CancelFunc, currentURL string, idx model.Indexer, vec model.Vectorizer, parent *tree.TreeNode, depth int) {
+func (ws *webSpider) CrawlWithContext(ctx, global context.Context, canc context.CancelFunc, currentURL string, idx model.Indexer, vec model.Vectorizer, parent *tree.TreeNode, depth int) {
 	defer canc()
     select {
 	case <-ctx.Done():
@@ -118,9 +118,9 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, canc context.CancelFu
             if ws.onlySameDomain || same {
                 child.SetRules(parent.GetRules())
             }
-			c, cancel := context.WithTimeout(idx.GetContext(), 90 * time.Second)
+			c, cancel := context.WithTimeout(global, 90 * time.Second)
             ws.Pool.Submit(func() {
-                ws.CrawlWithContext(c, cancel, link, idx, vec, child, depth+1)
+                ws.CrawlWithContext(c, global, cancel, link, idx, vec, child, depth+1)
             })
         }
     }
@@ -177,9 +177,9 @@ func (ws *webSpider) CrawlWithContext(ctx context.Context, canc context.CancelFu
         if ws.onlySameDomain || same {
             child.SetRules(parent.GetRules())
         }
-        c, cancel := context.WithTimeout(idx.GetContext(), 90 * time.Second)
+        c, cancel := context.WithTimeout(global, 90 * time.Second)
         ws.Pool.Submit(func() {
-        	ws.CrawlWithContext(c, cancel, link, idx, vec, child, depth+1)
+        	ws.CrawlWithContext(c, global, cancel, link, idx, vec, child, depth+1)
         })
     }
 }

@@ -15,7 +15,6 @@ type Indexer interface {
     HandleDocumentWords(string) ([]int, error)
     AddDocument(*Document, []int)
     IncUrlsCounter()
-	GetContext() context.Context
 }
 
 type Logger interface {

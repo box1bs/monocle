@@ -26,32 +26,31 @@ type SearchIndex struct {
 	stopWords 	model.StopWords
 	logger    	model.Logger
 	root 		*tree.TreeNode
+	visitedUrls *sync.Map
 	UrlsCrawled int32
 	AvgLen	 	float64
-	quitCTX		context.Context
 	vectorizer  *Vectorizer
 }
 
-func NewSearchIndex(stemmer model.Stemmer, stopWords model.StopWords, l model.Logger, ir model.Repository, context context.Context, v *Vectorizer) *SearchIndex {
+func NewSearchIndex(stemmer model.Stemmer, stopWords model.StopWords, l model.Logger, ir model.Repository, v *Vectorizer) *SearchIndex {
 	return &SearchIndex{
 		mu: new(sync.RWMutex),
 		stopWords: stopWords,
 		stemmer: stemmer,
 		root: tree.NewNode("/"),
+		visitedUrls: new(sync.Map),
 		logger: l,
-		quitCTX: context,
 		indexRepos: ir,
 		vectorizer: v,
 	}
 }
 
-func (idx *SearchIndex) Index(config *configs.ConfigData) error {
+func (idx *SearchIndex) Index(config *configs.ConfigData, c context.Context) error {
 	wp := workerPool.NewWorkerPool(config.WorkersCount, config.TasksCount)
-    mp := new(sync.Map)
-	idx.indexRepos.LoadVisitedUrls(mp)
-	defer idx.indexRepos.SaveVisitedUrls(mp)
+	idx.indexRepos.LoadVisitedUrls(idx.visitedUrls)
+	defer idx.indexRepos.SaveVisitedUrls(idx.visitedUrls)
 	var rl *web.RateLimiter
-	ctx, cancel := context.WithTimeout(context.Background(), 120 * time.Second)
+	ctx, cancel := context.WithTimeout(c, 120 * time.Second)
 	defer cancel()
     for _, url := range config.BaseURLs {
 		if config.Rate > 0 {
@@ -60,9 +59,9 @@ func (idx *SearchIndex) Index(config *configs.ConfigData) error {
 		}
 		node := tree.NewNode(url)
 		idx.root.AddChild(node)
-        spider := web.NewSpider(url, config.MaxDepth, config.MaxLinksInPage, mp, wp, config.OnlySameDomain, rl)
+        spider := web.NewSpider(url, config.MaxDepth, config.MaxLinksInPage, idx.visitedUrls, wp, config.OnlySameDomain, rl)
         spider.Pool.Submit(func() {
-            spider.CrawlWithContext(ctx, cancel, url, idx, idx.vectorizer, node, 0)
+            spider.CrawlWithContext(ctx, c, cancel, url, idx, idx.vectorizer, node, 0)
         })
     }
 	wp.Wait()
@@ -168,7 +167,7 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 		close(errCh)
 	}()
 	
-	c, cancel := context.WithTimeout(idx.quitCTX, 5 * time.Second)
+	c, cancel := context.WithTimeout(context.Background(), 5 * time.Second)
 	defer cancel()
 	vec, err := idx.vectorizer.Vectorize(query, c)
 	if err != nil {
@@ -295,8 +294,4 @@ func (idx *SearchIndex) HandleDocumentWords(text string) ([]int, error) {
 	defer idx.mu.Unlock()
 	
 	return idx.indexRepos.TransferOrSaveToSequence(idx.TokenizeAndStem(text), true)
-}
-
-func (idx *SearchIndex) GetContext() context.Context {
-	return idx.quitCTX
 }
