@@ -23,7 +23,7 @@ type Logger interface {
 }
 
 type Vectorizer interface {
-	Vectorize(string, context.Context) ([]float64, error)
+	Vectorize(string, context.Context) ([][]float64, error)
 }
 
 type Repository interface {

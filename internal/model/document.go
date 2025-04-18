@@ -8,7 +8,7 @@ type Document struct {
 	Description		string		`json:"description"`
 	WordCount 		int			`json:"words_count"`
 	PartOfFullSize	float64		`json:"part_of_full_size"`
-	Vec 			[]float64	`json:"vec"`
+	Vec 			[][]float64	`json:"vec"`
 }
 
 func (d *Document) GetFullSize() float64 {

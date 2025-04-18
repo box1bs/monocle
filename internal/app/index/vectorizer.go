@@ -14,10 +14,10 @@ type Vectorizer struct {
 }
 
 type VecResponce struct {
-	Vec 	[]float64 	`json:"vec"`
+	Vec 	[][]float64 	`json:"vec"`
 }
 
-func (v *Vectorizer) Vectorize(text string, ctx context.Context) ([]float64, error) {
+func (v *Vectorizer) Vectorize(text string, ctx context.Context) ([][]float64, error) {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(map[string]string{
 		"text": text,

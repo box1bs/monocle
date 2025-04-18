@@ -121,6 +121,7 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 	}
 
 	result := make([]*model.Document, 0)
+	alreadyIncluded := make(map[string]struct{})
 	var wg sync.WaitGroup
 	var rankMu sync.Mutex
 	var resultMu sync.Mutex
@@ -156,6 +157,11 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 				rankMu.Unlock()
 	
 				resultMu.Lock()
+				if _, exists := alreadyIncluded[doc.URL]; exists {
+					resultMu.Unlock()
+					continue
+				}
+				alreadyIncluded[doc.URL] = struct{}{}
 				result = append(result, doc)
 				resultMu.Unlock()
 			}
@@ -184,7 +190,11 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 		r := rank[doc.Id]
 
 		if r.tf_idf >= quorum {
-			r.cos = calcCosineSimilarity(doc.Vec, vec)
+			var sumCos float64
+			for _, v := range doc.Vec{
+				sumCos += calcCosineSimilarity(v, vec[0])
+			}
+			r.cos = sumCos / float64(len(doc.Vec))
 			rank[doc.Id] = r
 			filteredResult = append(filteredResult, doc)
 		}

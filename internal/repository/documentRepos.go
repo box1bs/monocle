@@ -27,7 +27,7 @@ func (ir *IndexRepository) bytesToDocument(body []byte) (*model.Document, error)
 		Description 	string 		`json:"description"`
 		WordCount 		int 		`json:"words_count"`
 		PartOfFullSize 	float64 	`json:"part_of_full_size"`
-		Vec 			[]float64 	`json:"vec"`
+		Vec 			[][]float64 `json:"vec"`
 	}
 	err := json.Unmarshal(body, &payload)
 	if err != nil {
