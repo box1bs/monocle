@@ -13,7 +13,7 @@ import (
 	"github.com/box1bs/Saturday/configs"
 	"github.com/box1bs/Saturday/internal/app/index"
 	"github.com/box1bs/Saturday/internal/model"
-	"github.com/box1bs/Saturday/internal/view"
+	"github.com/box1bs/Saturday/internal/logo"
 	"github.com/box1bs/Saturday/pkg/stemmer"
 	"github.com/google/uuid"
 	"github.com/rs/cors"
@@ -241,7 +241,7 @@ func StartServer(port int, logger model.Logger, ir model.Repository, enc model.E
         AllowCredentials: true,
     })
 	addr := fmt.Sprintf(":%d", port)
-	view.PrintLogo()
+	logo.PrintLogo()
 	log.Printf("REST API started at %d\n", port)
 	return http.ListenAndServe(addr, c.Handler(mux))
 }

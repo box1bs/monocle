@@ -1,6 +1,15 @@
-internal/app/ranking/model/__pycache__/
-internal/app/ranking/model/.venv/
+internal/app/semantic_ebeddings/__pycache__/
+internal/app/semantic_ebeddings/.venv/
+internal/app/semantic_ebeddings/.idea/
+
+internal/view/.idea/
+internal/view/.next/
+internal/view/node_modules/
+internal/view/.vercel
+internal/view/.env.local
+internal/view/next-env.d.ts
 logs/*.txt
+
 
 main.exe
 
