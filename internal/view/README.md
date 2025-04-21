@@ -1,36 +1,99 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Saturday - Secure Search Frontend
+
+A Next.js-based frontend application for the Saturday search engine, featuring end-to-end encryption for secure search operations.
+
+## Features
+
+### Security
+- **End-to-End Encryption**: All communication with the backend is encrypted using:
+  - RSA-OAEP for initial key exchange
+  - AES-GCM (256-bit) for subsequent requests/responses
+- **Zero Trust Architecture**: Server never sees plaintext search queries
+
+### User Interface
+- **Responsive Design**: 5-column masonry layout for search results
+- **Real-time Updates**: Dynamic search results with loading states
+- **Clean Typography**: Uses Piazzolla font for optimal readability
+
+## Technical Stack
+
+- **Framework**: Next.js 14 with App Router
+- **Language**: TypeScript
+- **Encryption**: Web Crypto API
+  - RSA-OAEP with SHA-256 for key exchange
+  - AES-GCM for payload encryption
+- **Styling**: CSS Modules
+
+## API Integration
+
+### Encryption Flow
+1. Fetches RSA public key from server
+2. Generates AES session key
+3. Encrypts AES key with RSA
+4. Sends encrypted AES key to server
+5. Uses AES for all subsequent communications
+
+### Endpoints Used
+- `GET /public` - Retrieves RSA public key
+- `POST /aes` - Sends encrypted AES key
+- `POST /search` - Performs encrypted search
 
 ## Getting Started
 
-First, run the development server:
-
+### Prerequisites
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+node >= 18.0.0
+npm >= 9.0.0
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Installation
+```bash
+npm install
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Development
+```bash
+npm run dev
+```
+The application will be available at [http://localhost:3000](http://localhost:3000)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Production Build
+```bash
+npm run build
+npm run start
+```
 
-## Learn More
+### Environment Variables
+Create a `.env.local` file:
+```env
+NEXT_PUBLIC_API_BASE=http://your-api-url
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Project Structure
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```
+src/
+├── app/
+│   ├── page.tsx        # Main search interface
+│   ├── page.module.css # Styles for search interface
+│   └── layout.tsx      # Root layout
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Security Considerations
 
-## Deploy on Vercel
+- All search queries are encrypted before transmission
+- AES key is regenerated for each session
+- Uses secure random number generation for IVs
+- Implements secure key exchange protocol
+- No plaintext data is transmitted after initial setup
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Browser Support
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Requires browsers with support for:
+- Web Crypto API
+- ES6+ features
+- Fetch API
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details

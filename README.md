@@ -16,7 +16,8 @@ Saturday is a powerful search robot and search engine built in Go, designed to e
 
 ### Search Features
 - **Text Processing**: Applies stemming and stop word filtering for enhanced search quality.
-- **Hybrid Search Ranking**: Combines TF-IDF, BM25, and machine learning for precise results (assumed based on project description).
+- **Hybrid Search Ranking**: Combines TF-IDF, BM25, and BERT-tiny model for precise results.
+- **Neural Embeddings**: Uses BERT-tiny for generating document and query embeddings, enabling semantic search capabilities.
 
 ### System Features
 - **Highly Configurable**: Customizes behavior via JSON configuration files.
@@ -53,13 +54,14 @@ The search robot's process, inferred from the `srv` and `indexRepository` packag
 
 ### Search Functionality
 
-Saturday’s search engine, implemented in the `srv` package, processes queries as follows:
+Saturday's search engine, implemented in the `srv` package, processes queries as follows:
 
-1. **Query Processing**: Tokenizes and stems the user’s query using `stemmer.NewEnglishStemmer()`.
+1. **Query Processing**: Tokenizes and stems the user's query using `stemmer.NewEnglishStemmer()`.
 2. **Document Retrieval**: Fetches documents matching query terms from the index (`GetDocumentsByWord`).
-3. **Scoring**: Applies ranking logic (assumed to include TF-IDF, BM25, and machine learning integration).
-4. **Result Ranking**: Sorts results by relevance.
-5. **Response**: Returns URLs and descriptions (`SearchResponse`).
+3. **Semantic Scoring**: Generates embeddings using BERT-tiny model for both query and documents.
+4. **Hybrid Ranking**: Combines traditional scoring (TF-IDF, BM25) with cosine similarity of BERT-tiny embeddings.
+5. **Result Ranking**: Sorts results by relevance using the combined scoring approach.
+6. **Response**: Returns URLs and descriptions (`SearchResponse`).
 
 ### Concurrency Model
 
@@ -105,98 +107,171 @@ Run Saturday as a REST server:
 ./saturday --srv-port=8080
 ```
 
-### Using the REST API
+## API Endpoints Documentation
 
-Control Saturday via HTTP endpoints:
+### Authentication and Encryption
+All endpoints except `/public` and `/aes` require encrypted request bodies using AES encryption.
 
-1. **Start a Search Robot Job**
-   ```
-   POST /crawl/start
-   {
-       "base_urls": ["https://example.com"],
-       "worker_count": 10,
-       "task_count": 100,
-       "max_links_in_page": 50,
-       "max_depth_crawl": 3,
-       "only_same_domain": true,
-       "rate": 5
-   }
-   ```
-   **Response**:
-   ```json
-   {
-       "job_id": "unique-job-id",
-       "status": "started"
-   }
-   ```
+#### 1. Get Public Key
+```http
+GET /public
+```
+**Description**: Retrieves the RSA public key for encrypting the AES key.
+**Response**: PEM-encoded RSA public key
+**Content-Type**: application/x-pem-file
+**Status Codes**:
+- 200: Success
+- 500: Server error getting/encoding public key
 
-2. **Check Search Robot Status**
-   ```
-   GET /crawl/status?job_id=unique-job-id
-   ```
-   **Response**:
-   ```json
-   {
-       "status": "running",
-       "pages_crawled": 150
-   }
-   ```
+#### 2. Set AES Key
+```http
+POST /aes
+```
+**Description**: Sends RSA-encrypted AES key for subsequent requests
+**Request Body**: RSA-encrypted AES key (base64 encoded)
+**Status Codes**:
+- 200: Success
+- 400: Invalid request body
+- 500: Decryption failed
 
-3. **Stop a Search Robot Job**
-   ```
-   POST /crawl/stop
-   {
-       "job_id": "unique-job-id"
-   }
-   ```
-   **Response**:
-   ```json
-   {
-       "status": "stopping"
-   }
-   ```
+### Search Robot Control
 
-4. **Search Indexed Content**
-   ```
-   POST /search
-   {
-       "job_id": "unique-job-id",
-       "query": "example search",
-       "max_results": 10
-   }
-   ```
-   **Response**:
-   ```json
-   {
-       "results": [
-           {
-               "url": "https://example.com/page1",
-               "description": "This is an example page."
-           },
-           {
-               "url": "https://example.com/page2",
-               "description": "Another example page."
-           }
-       ]
-   }
-   ```
+#### 3. Start Crawling
+```http
+POST /crawl/start
+```
+**Description**: Initiates a new crawling job
+**Request Body**:
+```json
+{
+    "base_urls": ["https://example.com"],
+    "worker_count": 10,
+    "task_count": 100,
+    "max_links_in_page": 50,
+    "max_depth_crawl": 3,
+    "only_same_domain": true,
+    "rate": 5
+}
+```
+**Response**:
+```json
+{
+    "job_id": "uuid-string",
+    "status": "started"
+}
+```
+**Status Codes**:
+- 200: Job started successfully
+- 400: Invalid request parameters
+- 500: Internal server error
 
-## Performance Considerations
+#### 4. Stop Crawling
+```http
+POST /crawl/stop
+```
+**Description**: Stops an active crawling job
+**Request Body**:
+```json
+{
+    "job_id": "uuid-string"
+}
+```
+**Response**:
+```json
+{
+    "status": "stopped"
+}
+```
+**Status Codes**:
+- 200: Job stopped successfully
+- 400: Invalid job ID
+- 404: Job not found
 
-- **Concurrency**: Worker pool optimizes resource use for the search robot (`workerPool`).
-- **Rate Limiting**: Prevents server overload during search robot operations (`Rate`).
-- **Logging**: Asynchronous to minimize I/O delays (`logger`).
-- **URL Management**: Normalization and tracking avoid duplicates (`indexRepository`).
-- **Persistent Storage**: BadgerDB enables large-scale indexing (`indexRepository`).
-- **Memory Efficiency**: Disk-based storage reduces RAM usage (BadgerDB).
-- **Graceful Shutdown**: Cleanly stops search robot jobs (`Stop()` in `workerPool` and `stopCrawlChan`).
+#### 5. Get Crawling Status
+```http
+GET /crawl/status?job_id=uuid-string
+```
+**Description**: Retrieves the current status of a crawling job
+**Query Parameters**:
+- job_id: UUID of the crawling job
+**Response**:
+```json
+{
+    "status": "running",
+    "pages_crawled": 150
+}
+```
+**Possible Status Values**:
+- "initializing": Job is starting up
+- "running": Job is actively crawling
+- "stopping": Job is gracefully shutting down
+- "completed": Job finished successfully
+- "failed": Job encountered an error
+- "not_found": Job ID doesn't exist
+
+**Status Codes**:
+- 200: Status retrieved successfully
+- 400: Missing or invalid job ID
+- 404: Job not found
+
+### Search Operations
+
+#### 6. Search Indexed Content
+```http
+POST /search
+```
+**Description**: Searches the indexed content using hybrid ranking
+**Request Body**:
+```json
+{
+    "job_id": "uuid-string",
+    "query": "search terms",
+    "max_results": 10
+}
+```
+**Response**:
+```json
+[
+    {
+        "url": "https://example.com/page1",
+        "description": "Page description with highlighted search terms"
+    }
+]
+```
+**Query Parameters**:
+- query: Search terms (required)
+- max_results: Maximum number of results to return (default: 10)
+- job_id: Optional ID to search within specific crawl results
+
+**Ranking Factors**:
+- Word frequency (TF-IDF)
+- BM25 score
+- Semantic similarity (BERT embeddings)
+- Word inclusion count
+
+**Status Codes**:
+- 200: Search completed successfully
+- 400: Invalid search parameters
+- 500: Search operation failed
+
+### Response Encryption
+All successful responses (except `/public`) are encrypted using the following format:
+```json
+{
+    "data": "base64-encoded-encrypted-response"
+}
+```
+
+### Error Responses
+Error responses follow the standard HTTP status codes and include a plain text error message in the response body.
 
 ## Technical Requirements
 
-- **Go**: 1.13+
+- **Go**: 1.23.3
 - **Dependencies**:
   - `github.com/dgraph-io/badger/v3` (BadgerDB)
   - `github.com/google/uuid` (UUID generation)
+  - `golang.org/x/net` (html handling)
   - Additional dependencies inferred from imports (e.g., `net/http`, `sync`).
 
 ## License

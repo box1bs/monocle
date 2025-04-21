@@ -191,7 +191,7 @@ func (s *server) searchHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	results := s.index.Search(req.Query, 0, max(0, req.MaxResults))
+	results := s.index.Search(req.Query, 2.0, max(0, req.MaxResults))
 	responseResults := make([]*SearchResult, 0)
 	for i := range results {
 		responseResults = append(responseResults, &SearchResult{
