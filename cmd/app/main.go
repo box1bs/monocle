@@ -61,7 +61,8 @@ func main() {
 
 	errChan := make(chan error)
 	go func() {
-		errChan <- srv.StartServer(*httpPort, al, ir, enc)
+		errChan <- srv.StartServer(*httpPort, al, ir, enc, index.NewSearchIndex(
+			stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), al, ir, index.NewVectorizer()))
 	}()
 
 	select {

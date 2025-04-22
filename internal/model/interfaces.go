@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/box1bs/Saturday/configs"
 	"github.com/google/uuid"
 )
 
@@ -15,6 +16,9 @@ type Indexer interface {
     HandleDocumentWords(string) ([]int, error)
     AddDocument(*Document, []int)
     IncUrlsCounter()
+	Index(*configs.ConfigData, context.Context) error
+	GetCurrentUrlsCrawled() int32
+	Search(string, float64, int) []*Document
 }
 
 type Logger interface {

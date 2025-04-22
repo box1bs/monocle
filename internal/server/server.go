@@ -11,10 +11,10 @@ import (
 	"sync"
 
 	"github.com/box1bs/Saturday/configs"
-	"github.com/box1bs/Saturday/internal/app/index"
-	"github.com/box1bs/Saturday/internal/model"
+	"github.com/box1bs/Saturday/internal/server/validation"
 	"github.com/box1bs/Saturday/internal/logo"
-	"github.com/box1bs/Saturday/pkg/stemmer"
+	"github.com/box1bs/Saturday/internal/model"
+	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/rs/cors"
 )
@@ -25,7 +25,9 @@ type server struct {
 	logger         	model.Logger
 	indexRepos		model.Repository
 	encryptor 		model.Encryptor
-	index         	*index.SearchIndex
+	index         	model.Indexer
+	urlValidator 	*validation.URLValidator
+	queryValidator 	*validation.QueryValidator
 }
 
 type jobInfo struct {
@@ -34,13 +36,15 @@ type jobInfo struct {
 	cancel 			context.CancelFunc
 }
 
-func NewSaturdayServer(logger model.Logger, ir model.Repository, enc model.Encryptor) *server {
+func NewSaturdayServer(logger model.Logger, ir model.Repository, idx model.Indexer, enc model.Encryptor) *server {
 	return &server{
 		activeJobs:     make(map[string]*jobInfo),
 		logger:         logger,
 		indexRepos: 	ir,
-		encryptor: enc,
-		index: 			index.NewSearchIndex(stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), logger, ir, index.NewVectorizer()),
+		encryptor: 		enc,
+		index: 			idx,
+		urlValidator: 	validation.NewURLValidator(),
+		queryValidator: validation.NewQueryValidator(),
 	}
 }
 
@@ -115,6 +119,17 @@ func (s *server) startCrawlHandler(w http.ResponseWriter, r *http.Request) {
 		OnlySameDomain: req.OnlySameDomain,
 		Rate:           req.Rate,
 	}
+	for _, url := range cfg.BaseURLs {
+		if err := s.urlValidator.ValidateURLs(url); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	validator := validator.New()
+	if err := validator.Struct(cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &jobInfo{
 		id:            	jobID,
@@ -180,7 +195,7 @@ func (s *server) getCrawlStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	response := StatusResponse{
 		Status:       job.status,
-		PagesCrawled: int(s.index.UrlsCrawled),
+		PagesCrawled: int(s.index.GetCurrentUrlsCrawled()),
 	}
 	s.ecnryptResponse(w, response)
 }
@@ -191,7 +206,11 @@ func (s *server) searchHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	results := s.index.Search(req.Query, 2.0, max(0, req.MaxResults))
+	if err := s.queryValidator.ValidateQuery(req.Query); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	results := s.index.Search(req.Query, 0.05, max(0, req.MaxResults))
 	responseResults := make([]*SearchResult, 0)
 	for i := range results {
 		responseResults = append(responseResults, &SearchResult{
@@ -202,8 +221,8 @@ func (s *server) searchHandler(w http.ResponseWriter, r *http.Request) {
 	s.ecnryptResponse(w, responseResults)
 }
 
-func StartServer(port int, logger model.Logger, ir model.Repository, enc model.Encryptor) error {
-	s := NewSaturdayServer(logger, ir, enc)
+func StartServer(port int, logger model.Logger, ir model.Repository, enc model.Encryptor, idx model.Indexer) error {
+	s := NewSaturdayServer(logger, ir, idx, enc)
 	mux := http.NewServeMux()
 	mux.Handle("GET /public", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pemBlock, err := s.encryptor.GetPublicKey()

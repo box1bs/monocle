@@ -299,6 +299,10 @@ func (idx *SearchIndex) TokenizeAndStem(text string) []string {
     return tokens
 }
 
+func (idx *SearchIndex) GetCurrentUrlsCrawled() int32 {
+	return atomic.LoadInt32(&idx.UrlsCrawled)
+}
+
 func (idx *SearchIndex) HandleDocumentWords(text string) ([]int, error) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()

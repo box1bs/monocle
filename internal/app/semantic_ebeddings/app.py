@@ -1,5 +1,5 @@
-import torch
-from flask import Flask, request, jsonify
+import torch # type: ignore
+from flask import Flask, request, jsonify # type: ignore
 from transformers import BertConfig, BertModel, BertTokenizer
 
 # Initialize Flask app
