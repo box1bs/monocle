@@ -14,7 +14,6 @@ import (
 	"github.com/box1bs/Saturday/internal/server/validation"
 	"github.com/box1bs/Saturday/internal/logo"
 	"github.com/box1bs/Saturday/internal/model"
-	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/rs/cors"
 )
@@ -22,8 +21,6 @@ import (
 type server struct {
 	activeJobs     	map[string]*jobInfo
 	jobsMutex      	sync.RWMutex
-	logger         	model.Logger
-	indexRepos		model.Repository
 	encryptor 		model.Encryptor
 	index         	model.Indexer
 	urlValidator 	*validation.URLValidator
@@ -36,11 +33,9 @@ type jobInfo struct {
 	cancel 			context.CancelFunc
 }
 
-func NewSaturdayServer(logger model.Logger, ir model.Repository, idx model.Indexer, enc model.Encryptor) *server {
+func NewSaturdayServer(idx model.Indexer, enc model.Encryptor) *server {
 	return &server{
 		activeJobs:     make(map[string]*jobInfo),
-		logger:         logger,
-		indexRepos: 	ir,
 		encryptor: 		enc,
 		index: 			idx,
 		urlValidator: 	validation.NewURLValidator(),
@@ -119,14 +114,20 @@ func (s *server) startCrawlHandler(w http.ResponseWriter, r *http.Request) {
 		OnlySameDomain: req.OnlySameDomain,
 		Rate:           req.Rate,
 	}
+	validURLs := make([]string, 0)
 	for _, url := range cfg.BaseURLs {
-		if err := s.urlValidator.ValidateURLs(url); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+		if err := s.urlValidator.ValidateURLs(url); err == nil {
+			validURLs = append(validURLs, url)
+		} else {
+			s.index.Write("invalid url: " + url)
 		}
 	}
-	validator := validator.New()
-	if err := validator.Struct(cfg); err != nil {
+	cfg.BaseURLs = validURLs
+	if len(cfg.BaseURLs) == 0 {
+		http.Error(w, "No valid URLs provided", http.StatusBadRequest)
+		return
+	}
+	if err := cfg.Validate(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -221,8 +222,8 @@ func (s *server) searchHandler(w http.ResponseWriter, r *http.Request) {
 	s.ecnryptResponse(w, responseResults)
 }
 
-func StartServer(port int, logger model.Logger, ir model.Repository, enc model.Encryptor, idx model.Indexer) error {
-	s := NewSaturdayServer(logger, ir, idx, enc)
+func StartServer(port int, enc model.Encryptor, idx model.Indexer) error {
+	s := NewSaturdayServer(idx, enc)
 	mux := http.NewServeMux()
 	mux.Handle("GET /public", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pemBlock, err := s.encryptor.GetPublicKey()
