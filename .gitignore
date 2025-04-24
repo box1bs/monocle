@@ -1,6 +1,6 @@
-internal/app/semantic_ebeddings/__pycache__/
-internal/app/semantic_ebeddings/.venv/
-internal/app/semantic_ebeddings/.idea/
+internal/app/semantic_embeddings/__pycache__/
+internal/app/semantic_embeddings/.venv/
+internal/app/semantic_embeddings/.idea/
 
 internal/view/.idea/
 internal/view/.next/
