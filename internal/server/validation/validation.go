@@ -21,7 +21,7 @@ var (
 
 func NewURLValidator() *URLValidator {
 	return &URLValidator{
-		MaxURLLenght:   2048,
+		MaxURLLenght:   1024,
 		AllowedSchemes: []string{"http", "https"},
 	}
 }
