@@ -41,6 +41,7 @@ type Repository interface {
 	GetAllDocuments() ([]*Document, error)
 	GetDocumentsCount() (int, error)
 
+	GetDict() ([]string, error)
 	TransferOrSaveToSequence([]string, bool) ([]int, error)
 }
 

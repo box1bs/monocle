@@ -2,6 +2,7 @@ package repository
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/dgraph-io/badger/v3"
 )
@@ -49,6 +50,25 @@ func (ir *IndexRepository) TransferOrSaveToSequence(words []string, canSave bool
         return nil, err
     }
     return ids, nil
+}
+
+func (ir *IndexRepository) GetDict() ([]string, error) {
+    var dict []string
+    err := ir.db.View(func(txn *badger.Txn) error {
+        iter := txn.NewIterator(badger.DefaultIteratorOptions)
+        defer iter.Close()
+
+        for iter.Seek([]byte(WordKeyPrefix)); iter.ValidForPrefix([]byte(WordKeyPrefix)); iter.Next() {
+            item := iter.Item()
+            dict = append(dict, strings.TrimPrefix(string(item.Key()), WordKeyPrefix))
+        }
+
+        return nil
+    })
+    if err != nil {
+        return nil, err
+    }
+    return dict, nil
 }
 
 func (ir *IndexRepository) getLastId() (int, error) {

@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/box1bs/Saturday/configs"
+	"github.com/box1bs/Saturday/internal/app/index/spell_checker"
 	"github.com/box1bs/Saturday/internal/app/index/tree"
 	"github.com/box1bs/Saturday/internal/app/web"
 	"github.com/box1bs/Saturday/internal/model"
@@ -111,13 +112,27 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 	}
 
 	index := make(map[int]map[uuid.UUID]int)
-	for _, term := range terms {
-		mp, err := idx.indexRepos.GetDocumentsByWord(term)
+	dict, err := idx.indexRepos.GetDict()
+	if err != nil {
+		log.Println(err)
+		return nil
+	}
+	for i := range terms {
+		if terms[i] == 0 {
+			sc := spellChecker.NewSpellChecker(3)
+			el := sc.BestReplacement(queryTerms[i], dict)
+			num, err := idx.indexRepos.TransferOrSaveToSequence([]string{el}, false)
+			if err != nil || len(num) == 0 {
+				continue
+			}
+			terms[i] = num[0]
+		}
+		mp, err := idx.indexRepos.GetDocumentsByWord(terms[i])
 		if err != nil {
 			log.Println(err)
 			return nil
 		}
-		index[term] = mp
+		index[terms[i]] = mp
 	}
 
 	result := make([]*model.Document, 0)
