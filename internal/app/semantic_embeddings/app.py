@@ -2,7 +2,6 @@ import torch
 from flask import Flask, request, jsonify
 from transformers import BertConfig, BertModel, BertTokenizer
 
-# Initialize Flask app
 app = Flask(__name__)
 
 config = BertConfig.from_json_file('model/config.json')

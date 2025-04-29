@@ -118,7 +118,7 @@ func (ws *webSpider) CrawlWithContext(ctx, global context.Context, canc context.
             if ws.onlySameDomain || same {
                 child.SetRules(parent.GetRules())
             }
-			c, cancel := context.WithTimeout(global, 90 * time.Second)
+			c, cancel := context.WithTimeout(global, 180 * time.Second)
             ws.Pool.Submit(func() {
                 ws.CrawlWithContext(c, global, cancel, link, idx, vec, child, depth+1)
             })
@@ -177,7 +177,7 @@ func (ws *webSpider) CrawlWithContext(ctx, global context.Context, canc context.
         if ws.onlySameDomain || same {
             child.SetRules(parent.GetRules())
         }
-        c, cancel := context.WithTimeout(global, 90 * time.Second)
+        c, cancel := context.WithTimeout(global, 180 * time.Second)
         ws.Pool.Submit(func() {
         	ws.CrawlWithContext(c, global, cancel, link, idx, vec, child, depth+1)
         })

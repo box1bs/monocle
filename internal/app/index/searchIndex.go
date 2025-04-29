@@ -29,6 +29,7 @@ type SearchIndex struct {
 	root 		*tree.TreeNode
 	visitedUrls *sync.Map
 	UrlsCrawled int32
+	isUpToDate 	bool
 	AvgLen	 	float64
 	vectorizer  *Vectorizer
 }
@@ -42,6 +43,7 @@ func NewSearchIndex(stemmer model.Stemmer, stopWords model.StopWords, l model.Lo
 		visitedUrls: new(sync.Map),
 		logger: l,
 		indexRepos: ir,
+		isUpToDate: true,
 		vectorizer: v,
 	}
 }
@@ -51,7 +53,7 @@ func (idx *SearchIndex) Index(config *configs.ConfigData, c context.Context) err
 	idx.indexRepos.LoadVisitedUrls(idx.visitedUrls)
 	defer idx.indexRepos.SaveVisitedUrls(idx.visitedUrls)
 	var rl *web.RateLimiter
-	ctx, cancel := context.WithTimeout(c, 120 * time.Second)
+	ctx, cancel := context.WithTimeout(c, 180 * time.Second)
 	defer cancel()
     for _, url := range config.BaseURLs {
 		if config.Rate > 0 {
@@ -67,6 +69,9 @@ func (idx *SearchIndex) Index(config *configs.ConfigData, c context.Context) err
     }
 	wp.Wait()
 	wp.Stop()
+	if idx.isUpToDate && idx.UrlsCrawled != 0 {
+		idx.isUpToDate = false
+	}
     return nil
 }
 
@@ -99,8 +104,9 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	
-	if idx.AvgLen == 0 {
+	if !idx.isUpToDate {
 		idx.updateAVGLen()
+		idx.isUpToDate = true
 	}
 	
 	rank := make(map[uuid.UUID]requestRanking)
@@ -119,7 +125,7 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 	}
 	for i := range terms {
 		if terms[i] == 0 {
-			sc := spellChecker.NewSpellChecker(3)
+			sc := spellChecker.NewSpellChecker(2)
 			el := sc.BestReplacement(queryTerms[i], dict)
 			num, err := idx.indexRepos.TransferOrSaveToSequence([]string{el}, false)
 			if err != nil || len(num) == 0 {

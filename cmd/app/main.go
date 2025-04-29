@@ -8,9 +8,9 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
-	"strings"
 	"syscall"
 
 	"github.com/box1bs/Saturday/configs"
