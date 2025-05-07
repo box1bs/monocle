@@ -11,32 +11,12 @@ func NewSpellChecker(maxTypoLen int) *SpellChecker {
 }
 
 func (s *SpellChecker) BestReplacement(s1 string, dict []string) string {
-	minDist := int(1e9)
-	fixed := make(map[string]int)
 	for _, s2 := range dict {
 		distance := s.wagnerFisherAlgorithm(s1, s2)
-		if minDist > distance {
-			minDist = distance
-			fixed[s2] = distance
+		if s.maxTypo >= distance {
+			return s2
 		}
 	}
-	if minDist == 1e9 {
-		return ""
-	}
-	for k, v := range fixed {
-		if v != minDist {
-			delete(fixed, k)
-		}
-	}
-	return s.checkFixProbability(fixed, s1)
-}
-
-func (s *SpellChecker) checkFixProbability(fixes map[string]int, orig string) string {
-	//if len(fixes) == 1 {
-		for k := range fixes {
-			return k
-		}
-	//}
 	return ""
 }
 

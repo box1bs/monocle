@@ -178,11 +178,11 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 				rankMu.Unlock()
 	
 				resultMu.Lock()
-				if _, exists := alreadyIncluded[doc.URL]; exists {
+				if _, exists := alreadyIncluded[doc.Id.String()]; exists {
 					resultMu.Unlock()
 					continue
 				}
-				alreadyIncluded[doc.URL] = struct{}{}
+				alreadyIncluded[doc.Id.String()] = struct{}{}
 				result = append(result, doc)
 				resultMu.Unlock()
 			}
