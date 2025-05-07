@@ -21,7 +21,7 @@ func NewAsyncLogger(wr io.Writer) (*AsyncLogger, error) {
 	go func() {
 		defer al.wg.Done()
 		for msg := range al.ch {
-			_, err := al.wr.Write([]byte(msg))
+			_, err := al.wr.Write([]byte(msg + "/n"))
 			if err != nil {
 				log.Println("error logging url: " + msg)
 			}
