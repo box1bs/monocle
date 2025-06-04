@@ -23,6 +23,7 @@ func (s *SpellChecker) BestReplacement(s1 string, dict []string) string {
 func (s *SpellChecker) wagnerFisherAlgorithm(s1, s2 string) int {
 	w1, w2 := len(s1), len(s1)
     dp := make([][]int, w1+1)
+
     for i := range w1+1 {
         dp[i] = make([]int, w2+1)
         dp[i][0] = i
@@ -30,6 +31,7 @@ func (s *SpellChecker) wagnerFisherAlgorithm(s1, s2 string) int {
     for j := range w2+1 {
         dp[0][j] = j
     }
+    
     for i := range w1 {
         for j := range w2 {
             if s1[i] == s2[j] {

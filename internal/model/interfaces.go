@@ -46,7 +46,7 @@ type Repository interface {
 }
 
 type Stemmer interface {
-	Stem(string) string
+	TokenizeAndStem(string) []string
 }
 
 type Encryptor interface {
@@ -54,8 +54,4 @@ type Encryptor interface {
 	GetPublicKey() (*pem.Block, error)
 	EncryptAES([]byte) ([]byte, error)
 	DecryptMiddleware(http.Handler) http.Handler
-}
-
-type StopWords interface {
-	IsStopWord(string) bool
 }

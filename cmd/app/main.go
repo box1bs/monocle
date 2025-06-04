@@ -20,7 +20,7 @@ import (
 	"github.com/box1bs/Saturday/internal/repository"
 	srv "github.com/box1bs/Saturday/internal/server"
 	"github.com/box1bs/Saturday/logs/logger"
-	"github.com/box1bs/Saturday/pkg/stemmer"
+	"github.com/box1bs/Saturday/pkg/textHandling"
 	"github.com/dgraph-io/badger/v3"
 )
 
@@ -62,7 +62,7 @@ func main() {
 	errChan := make(chan error)
 	go func() {
 		errChan <- srv.StartServer(*httpPort, enc, index.NewSearchIndex(
-			stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), al, ir, index.NewVectorizer()))
+			textHandling.NewEnglishStemmer(), al, ir, index.NewVectorizer()))
 	}()
 
 	select {
@@ -95,7 +95,7 @@ func runCliMode(configPath, pathTolocalLog string, ir model.Repository) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	i := index.NewSearchIndex(stemmer.NewEnglishStemmer(), stemmer.NewStopWords(), logger, ir, index.NewVectorizer())
+	i := index.NewSearchIndex(textHandling.NewEnglishStemmer(), logger, ir, index.NewVectorizer())
 	if err := i.Index(cfg, ctx); err != nil {
 		panic(err)
 	}
