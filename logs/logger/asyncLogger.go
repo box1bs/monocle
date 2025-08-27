@@ -34,7 +34,7 @@ func (l *AsyncLogger) Write(data string) {
 	select {
 	case l.ch <- data:
 	default:
-		l.ch <- data
+		log.Println("log channel full, dropping log: " + data)
 	}
 }
 

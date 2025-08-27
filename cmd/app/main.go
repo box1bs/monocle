@@ -5,20 +5,15 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"strings"
 	"time"
 
-	"syscall"
-
 	"github.com/box1bs/Saturday/configs"
 	"github.com/box1bs/Saturday/internal/app/index"
-	"github.com/box1bs/Saturday/internal/encrypt"
 	"github.com/box1bs/Saturday/internal/model"
 	"github.com/box1bs/Saturday/internal/repository"
-	srv "github.com/box1bs/Saturday/internal/server"
 	"github.com/box1bs/Saturday/logs/logger"
 	"github.com/box1bs/Saturday/pkg/textHandling"
 	"github.com/dgraph-io/badger/v3"
@@ -28,8 +23,6 @@ func main() {
 	var (
 		configFile = flag.String("config", "configs/search_config.json", "Path to configuration file")
 		logFile    = flag.String("log", "logs/indexedURLs.txt", "Path to log file")
-		httpPort   = flag.Int("srv-port", 50051, "REST server port")
-		runCli     = flag.Bool("cli", false, "Run in CLI mode instead of REST server")
 	)
 	flag.Parse()
 
@@ -41,48 +34,12 @@ func main() {
 
 	ir := repository.NewIndexRepository(db)
 
-	if *runCli {
-		runCliMode(*configFile, *logFile, ir)
-		return
-	}
-
-	al, err := logger.NewAsyncLogger(os.Stdout)
+	cfg, err := configs.UploadLocalConfiguration(*configFile)
 	if err != nil {
 		panic(err)
 	}
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-
-	enc, err := encrypt.NewEncryptor()
-	if err != nil {
-		panic(err)
-	}
-
-	errChan := make(chan error)
-	go func() {
-		errChan <- srv.StartServer(*httpPort, enc, index.NewSearchIndex(
-			textHandling.NewEnglishStemmer(), al, ir, index.NewVectorizer()))
-	}()
-
-	select {
-		case <-stop:
-			log.Println("Shutting down...")
-			return
-		case err := <-errChan:
-			log.Printf("Error: %v\n", err)
-			return
-	}
-}
-
-// Original CLI mode functionality
-func runCliMode(configPath, pathTolocalLog string, ir model.Repository) {
-	cfg, err := configs.UploadLocalConfiguration(configPath)
-	if err != nil {
-		panic(err)
-	}
-
-	file, err := os.Create(pathTolocalLog)
+	file, err := os.Create(*logFile)
 	if err != nil {
 		panic(err)
 	}
@@ -92,10 +49,21 @@ func runCliMode(configPath, pathTolocalLog string, ir model.Repository) {
 	if err != nil {
 		panic(err)
 	}
+	defer logger.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	i := index.NewSearchIndex(textHandling.NewEnglishStemmer(), logger, ir, index.NewVectorizer())
+
+	go func() {
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt)
+		<-c
+		fmt.Println("\nShutting down...")
+		cancel()
+		os.Exit(0)
+	}()
+	
+	i := index.NewSearchIndex(ir, textHandling.NewEnglishStemmer(), logger)
 	if err := i.Index(cfg, ctx); err != nil {
 		panic(err)
 	}

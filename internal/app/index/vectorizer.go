@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-type Vectorizer struct {
+type vectorizer struct {
 	client *http.Client
 }
 
@@ -17,7 +17,7 @@ type VecResponce struct {
 	Vec 	[][]float64 	`json:"vec"`
 }
 
-func (v *Vectorizer) Vectorize(text string, ctx context.Context) ([][]float64, error) {
+func (v *vectorizer) vectorize(text string, ctx context.Context) ([][]float64, error) {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(map[string]string{
 		"text": text,
@@ -49,11 +49,11 @@ func (v *Vectorizer) Vectorize(text string, ctx context.Context) ([][]float64, e
 	return vecResponce.Vec, nil
 }
 
-func NewVectorizer() *Vectorizer {
+func newVectorizer() *vectorizer {
 	client := &http.Client{
 		Timeout: 15 * time.Second,
 	}
-	return &Vectorizer{
+	return &vectorizer{
 		client: client,
 	}
 }

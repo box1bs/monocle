@@ -3,15 +3,15 @@ package tree
 import "github.com/box1bs/Saturday/pkg/parser"
 
 type TreeNode struct {
-	url    		string
+	rules 		*parser.RobotsTxt
 	children 	[]*TreeNode
-	rule 		*parser.RobotsTxt
+	url    		string
 }
 
 func NewNode(url string) *TreeNode {
 	return &TreeNode{
-		url:    url,
 		children: make([]*TreeNode, 0),
+		url:    url,
 	}
 }
 
@@ -20,9 +20,9 @@ func (n *TreeNode) AddChild(child *TreeNode) {
 }
 
 func (n *TreeNode) GetRules() *parser.RobotsTxt {
-	return n.rule
+	return n.rules
 }
 
 func (n *TreeNode) SetRules(rules *parser.RobotsTxt) {
-	n.rule = rules
+	n.rules = rules
 }

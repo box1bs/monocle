@@ -1,6 +1,6 @@
 module github.com/box1bs/Saturday
 
-go 1.23.3
+go 1.24.3
 
 require (
 	github.com/dgraph-io/badger/v3 v3.2103.5

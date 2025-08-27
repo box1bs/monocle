@@ -45,7 +45,7 @@ func (rl *RateLimiter) getToken() {
 	<-rl.token
 }
 
-func (rl *RateLimiter) maybeGetToken() {
+func (rl *RateLimiter) tryToGetToken() {
 	if rl != nil {
 		rl.getToken()
 	}

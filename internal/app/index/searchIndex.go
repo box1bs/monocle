@@ -18,51 +18,81 @@ import (
 	"github.com/google/uuid"
 )
 
-type SearchIndex struct {
-	indexRepos  model.Repository
-	mu        	*sync.RWMutex
-	stemmer   	model.Stemmer
-	logger    	model.Logger
-	root 		*tree.TreeNode
-	visitedUrls *sync.Map
-	UrlsCrawled int32
-	isUpToDate 	bool
-	AvgLen	 	float64
-	vectorizer  *Vectorizer
+type repository interface {
+	LoadVisitedUrls(*sync.Map) error
+	SaveVisitedUrls(*sync.Map) error
+	IndexDocument(uuid.UUID, []int) error
+	GetDocumentsByWord(int) (map[uuid.UUID]int, error)
+
+	SaveDocument(doc *model.Document) error
+	GetDocumentByID(uuid.UUID) (*model.Document, error)
+	GetAllDocuments() ([]*model.Document, error)
+	GetDocumentsCount() (int, error)
+
+	GetDict() ([]string, error)
+	TransferOrSaveToSequence([]string, bool) ([]int, error)
 }
 
-func NewSearchIndex(stemmer model.Stemmer, l model.Logger, ir model.Repository, v *Vectorizer) *SearchIndex {
+type stemmer interface {
+	TokenizeAndStem(string) []string
+}
+
+type logger interface {
+	Write(string)
+	Close()
+}
+
+type SearchIndex struct {
+	mu        	*sync.RWMutex
+	root 		*tree.TreeNode
+	visitedUrls *sync.Map
+	vectorizer  *vectorizer
+	indexRepos  repository
+	stemmer   	stemmer
+	logger    	logger
+	AvgLen	 	float64
+	UrlsCrawled int32
+	isUpToDate 	bool
+}
+
+func NewSearchIndex(ir repository, stemmer stemmer, l logger) *SearchIndex {
 	return &SearchIndex{
 		mu: new(sync.RWMutex),
-		stemmer: stemmer,
 		root: tree.NewNode("/"),
 		visitedUrls: new(sync.Map),
-		logger: l,
+		vectorizer: newVectorizer(),
 		indexRepos: ir,
-		isUpToDate: true,
-		vectorizer: v,
+		stemmer: stemmer,
+		logger: l,
 	}
 }
 
-func (idx *SearchIndex) Index(config *configs.ConfigData, c context.Context) error {
+func (idx *SearchIndex) Index(config *configs.ConfigData, global context.Context) error {
 	wp := workerPool.NewWorkerPool(config.WorkersCount, config.TasksCount)
 	idx.indexRepos.LoadVisitedUrls(idx.visitedUrls)
 	defer idx.indexRepos.SaveVisitedUrls(idx.visitedUrls)
+
 	var rl *web.RateLimiter
+	if config.Rate > 0 {
+		rl = web.NewRateLimiter(config.Rate)
+		defer rl.Shutdown()
+	}
+	spider := web.NewScraper(idx.visitedUrls, rl, global, idx, wp, idx.logger.Write, idx.vectorizer.vectorize, web.ScrapeConfig{
+		Depth:          config.MaxDepth,
+		MaxLinksInPage: config.MaxLinksInPage,
+		OnlySameDomain: config.OnlySameDomain,
+	})
+
     for _, url := range config.BaseURLs {
-		if config.Rate > 0 {
-			rl = web.NewRateLimiter(config.Rate)
-			defer rl.Shutdown()
-		}
 		node := tree.NewNode(url)
 		idx.root.AddChild(node)
-        spider := web.NewScraper(url, config.MaxDepth, config.MaxLinksInPage, idx.visitedUrls, wp, config.OnlySameDomain, rl)
         spider.Pool.Submit(func() {
-			ctx, cancel := context.WithTimeout(c, 180 * time.Second)
+			ctx, cancel := context.WithTimeout(global, 20 * time.Second)
 			defer cancel()
-            spider.ScrapeWithContext(ctx, c, url, idx, idx.vectorizer, node, 0)
+            spider.ScrapeWithContext(ctx, url, node, 0)
         })
     }
+
 	wp.Wait()
 	wp.Stop()
 	if idx.isUpToDate && idx.UrlsCrawled != 0 {
@@ -72,10 +102,10 @@ func (idx *SearchIndex) Index(config *configs.ConfigData, c context.Context) err
 }
 
 type requestRanking struct {
-	includesWords 	int
 	tf_idf 			float64
 	bm25 			float64
 	cos 			float64
+	includesWords 	int
 	//any ranking scores
 }
 
@@ -192,7 +222,7 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 	
 	c, cancel := context.WithTimeout(context.Background(), 5 * time.Second)
 	defer cancel()
-	vec, err := idx.vectorizer.Vectorize(query, c)
+	vec, err := idx.vectorizer.vectorize(query, c)
 	if err != nil {
 		log.Println(err)
 		return nil
@@ -238,6 +268,33 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 	return filteredResult[:min(length, maxLen)]
 }
 
+func (idx *SearchIndex) IncUrlsCounter() {
+	atomic.AddInt32(&idx.UrlsCrawled, 1)
+}
+
+func (idx *SearchIndex) AddDocument(doc *model.Document, words []int) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	
+	idx.indexRepos.IndexDocument(doc.Id, words)
+
+	doc.WordCount = len(words)
+	doc.PartOfFullSize = 512.0 / float64(doc.WordCount)
+
+	idx.indexRepos.SaveDocument(doc)
+}
+
+func (idx *SearchIndex) GetCurrentUrlsCrawled() int32 {
+	return atomic.LoadInt32(&idx.UrlsCrawled)
+}
+
+func (idx *SearchIndex) HandleDocumentWords(text string) ([]int, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	
+	return idx.indexRepos.TransferOrSaveToSequence(idx.stemmer.TokenizeAndStem(text), true)
+}
+
 func calcCosineSimilarity(vec1, vec2 []float64) float64 {
 	if len(vec1) != len(vec2) {
 		return 0.0
@@ -264,35 +321,4 @@ func culcBM25(idf float64, tf float64, doc *model.Document, avgLen float64) floa
 	k1 := 1.2
 	b := 0.75
 	return idf * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * doc.GetFullSize() / avgLen))
-}
-
-func (idx *SearchIndex) Write(data string) {
-	idx.logger.Write(data)
-}
-
-func (idx *SearchIndex) IncUrlsCounter() {
-	atomic.AddInt32(&idx.UrlsCrawled, 1)
-}
-
-func (idx *SearchIndex) AddDocument(doc *model.Document, words []int) {
-    idx.mu.Lock()
-    defer idx.mu.Unlock()
-	
-	idx.indexRepos.IndexDocument(doc.Id, words)
-
-	doc.WordCount = len(words)
-	doc.PartOfFullSize = 512.0 / float64(doc.WordCount)
-
-	idx.indexRepos.SaveDocument(doc)
-}
-
-func (idx *SearchIndex) GetCurrentUrlsCrawled() int32 {
-	return atomic.LoadInt32(&idx.UrlsCrawled)
-}
-
-func (idx *SearchIndex) HandleDocumentWords(text string) ([]int, error) {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-	
-	return idx.indexRepos.TransferOrSaveToSequence(idx.stemmer.TokenizeAndStem(text), true)
 }

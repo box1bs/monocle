@@ -23,8 +23,8 @@ func ParseRobotsTxt(content string) *RobotsTxt {
     var currentAgent string
     var currentRule *Rule
 
-    lines := strings.Split(content, "\n")
-    for _, line := range lines {
+    lines := strings.SplitSeq(content, "\n")
+    for line := range lines {
         line = strings.TrimSpace(line)
         if len(line) == 0 || strings.HasPrefix(line, "#") {
             continue
@@ -94,7 +94,7 @@ func (r *RobotsTxt) IsAllowed(userAgent, url string) bool {
 }
 
 func FetchRobotsTxt(ctx context.Context, url string, cli *http.Client) (string, error) {
-    c, cancel := context.WithTimeout(ctx, time.Second * 15)
+    c, cancel := context.WithTimeout(ctx, time.Second * 3)
     defer cancel()
     req, err := http.NewRequestWithContext(c, "GET", url + "/robots.txt", nil)
     if err != nil {

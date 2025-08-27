@@ -9,8 +9,8 @@ import (
 type WorkerPool struct {
 	tasks     chan func()
 	taskQueue chan func()
-	wg        *sync.WaitGroup
 	quit      chan struct{}
+	wg        *sync.WaitGroup
 	workers   int32
 }
 

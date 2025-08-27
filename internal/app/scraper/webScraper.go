@@ -10,7 +10,6 @@ import (
 	"github.com/box1bs/Saturday/internal/app/index/tree"
 	"github.com/box1bs/Saturday/internal/model"
 	"github.com/box1bs/Saturday/pkg/parser"
-	"github.com/box1bs/Saturday/pkg/workerPool"
 	"golang.org/x/net/html"
 
 	"bufio"
@@ -29,40 +28,58 @@ import (
 var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 var urlRegex = regexp.MustCompile(`^https?://`)
 
+type indexer interface {
+    IncUrlsCounter()
+    HandleDocumentWords(string) ([]int, error)
+    AddDocument(*model.Document, []int)
+}
+
+type workerPool interface {
+	Submit(func())
+}
+
 type webScraper struct {
-	baseURL        string
-	client         *http.Client
-	visited        *sync.Map
-	maxD           int
-	maxLinksInPage int
-	Pool           *workerPool.WorkerPool
-    onlySameDomain bool
-    rateLimiter    *RateLimiter
+	client         	*http.Client
+	visited        	*sync.Map
+    rateLimiter    	*RateLimiter
+	globalCtx		context.Context
+	idx				indexer
+	Pool           	workerPool
+	write 			func(string)
+	vectorize		func(string, context.Context) ([][]float64, error)
+	cfg 		  	ScrapeConfig
+}
+
+type ScrapeConfig struct {
+	Depth           int
+	MaxLinksInPage 	int
+    OnlySameDomain 	bool
 }
 
 const sitemap = "sitemap.xml"
 
-func NewScraper(baseURL string, maxDepth, maxLinksInPage int, mp *sync.Map, wp *workerPool.WorkerPool, onlySameDomain bool, rateLimiter *RateLimiter) *webScraper {
+func NewScraper(mp *sync.Map, rateLimiter *RateLimiter, c context.Context, idx indexer, wp workerPool, write func(string), vectorize func(string, context.Context) ([][]float64, error), cfg ScrapeConfig) *webScraper {
 	return &webScraper{
-		baseURL: baseURL,
 		client: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 5 * time.Second,
 			Transport: &http.Transport{
-				IdleConnTimeout:   10 * time.Second,
+				IdleConnTimeout:   5 * time.Second,
 				DisableKeepAlives: false,
 				ForceAttemptHTTP2: true,
 			},
 		},
 		visited:        mp,
-		maxD:           maxDepth,
-		maxLinksInPage: maxLinksInPage,
-		Pool:           wp,
-        onlySameDomain: onlySameDomain,
         rateLimiter:    rateLimiter,
+		idx:            idx,
+		Pool:           wp,
+		write: 			write,
+		vectorize:		vectorize,
+		globalCtx:		c,
+		cfg: 			cfg,
 	}
 }
 
-func (ws *webScraper) ScrapeWithContext(ctx, global context.Context, currentURL string, idx model.Indexer, vec model.Vectorizer, parent *tree.TreeNode, depth int) {
+func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, parent *tree.TreeNode, depth int) {
     select {
 	case <-ctx.Done():
 		//log.Println("task time exided")
@@ -70,7 +87,7 @@ func (ws *webScraper) ScrapeWithContext(ctx, global context.Context, currentURL 
 	default:
     }
 
-    if depth >= ws.maxD {
+    if depth >= ws.cfg.Depth {
         return
     }
     
@@ -110,56 +127,58 @@ func (ws *webScraper) ScrapeWithContext(ctx, global context.Context, currentURL 
 			}
             child := tree.NewNode(link)
             parent.AddChild(child)
-			same, err := isSameOrigin(ws.baseURL, link)
+			same, err := isSameOrigin(link, currentURL)
 			if err != nil {
 				continue
 			}
-            if ws.onlySameDomain || same {
+            if ws.cfg.OnlySameDomain && same {
                 child.SetRules(parent.GetRules())
             }
             ws.Pool.Submit(func() {
-				c, cancel := context.WithTimeout(global, 180 * time.Second)
+				c, cancel := context.WithTimeout(ws.globalCtx, 20 * time.Second)
 				defer cancel()
-                ws.ScrapeWithContext(c, global, link, idx, vec, child, depth+1)
+                ws.ScrapeWithContext(c, link, child, depth+1)
             })
         }
     }
 
-    ws.rateLimiter.maybeGetToken()
+    ws.rateLimiter.tryToGetToken()
     
-    doc, err := ws.getHTML(ctx, currentURL)
+	c, cancel := context.WithTimeout(ctx, time.Second * 5)
+	defer cancel()
+    doc, err := ws.getHTML(c, currentURL)
     if err != nil || doc == "" {
 		//log.Printf("error parsing page: %s\n", currentURL)
         return
     }
     
-    idx.IncUrlsCounter()
-	idx.Write(currentURL)
+    ws.idx.IncUrlsCounter()
+	ws.write(currentURL)
 
     document := &model.Document{
         Id: uuid.New(),
         URL: currentURL,
     }
 
-	c, cancel := context.WithTimeout(ctx, time.Second * 15)
+	c, cancel = context.WithTimeout(ctx, time.Second * 5)
 	defer cancel()
 	var links []string
 	var content string
-    document.Description, links, content = ws.parseHTMLStream(c, doc, currentURL, userAgent, parent.GetRules())
+    document.Description, links, content = ws.parseHTMLStream(c, doc, currentURL, parent.GetRules())
 
-	c, cancel = context.WithTimeout(ctx, time.Second * 15)
+	c, cancel = context.WithTimeout(ctx, time.Second * 5)
 	defer cancel()
-	document.Vec, err = vec.Vectorize(content, c)
+	document.Vec, err = ws.vectorize(content, c)
 	if err != nil {
 		log.Printf("error vectorizing page: %s with error %d\n", currentURL, err)
 		return
 	}
 
-	words, err := idx.HandleDocumentWords(content)
+	words, err := ws.idx.HandleDocumentWords(content)
 	if err != nil {
 		return
 	}
-    idx.AddDocument(document, words)
+    ws.idx.AddDocument(document, words)
 
     for _, link := range links {
 		select {
@@ -170,17 +189,17 @@ func (ws *webScraper) ScrapeWithContext(ctx, global context.Context, currentURL 
 		}
         child := tree.NewNode(link)
         parent.AddChild(child)
-		same, err := isSameOrigin(ws.baseURL, link)
+		same, err := isSameOrigin(link, currentURL)
 		if err != nil {
 			continue
 		}
-        if ws.onlySameDomain || same {
+        if ws.cfg.OnlySameDomain && same {
             child.SetRules(parent.GetRules())
         }
         ws.Pool.Submit(func() {
-			c, cancel := context.WithTimeout(global, 180 * time.Second)
+			c, cancel := context.WithTimeout(ws.globalCtx, 20 * time.Second)
 			defer cancel()
-        	ws.ScrapeWithContext(c, global, link, idx, vec, child, depth+1)
+        	ws.ScrapeWithContext(c, link, child, depth+1)
         })
     }
 }
@@ -197,15 +216,15 @@ func (ws *webScraper) haveSitemap(url string) ([]string, error) {
 	return urls, err
 }
 
-func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL, userAgent string, rules *parser.RobotsTxt) (description string, links []string, fullText string) {
+func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL string, rules *parser.RobotsTxt) (description string, links []string, fullText string) {
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
 	var metaDesc, ogDesc, firstParagraph string
 	var inParagraph, inScriptOrStyle bool
 	var fullTextBuilder strings.Builder
-	links = make([]string, 0, ws.maxLinksInPage)
+	links = make([]string, 0, ws.cfg.MaxLinksInPage)
 
 	tokenCount := 0
-    const checkContextEvery = 20
+    const checkContextEvery = 10
 
 	for {
 		tokenCount++
@@ -273,7 +292,7 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL,
 						if err != nil {
 							break
 						}
-						if link != "" && len(links) < ws.maxLinksInPage {
+						if link != "" && len(links) < ws.cfg.MaxLinksInPage {
 							normalized, err := normalizeUrl(link)
 							if err != nil {
 								break
@@ -290,7 +309,7 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL,
 									break
 								}
 							}
-							if ws.onlySameDomain {
+							if ws.cfg.OnlySameDomain {
 								same, err := isSameOrigin(link, baseURL)
 								if err != nil {
 									break
@@ -348,7 +367,7 @@ func (ws *webScraper) isVisited(URL string) bool {
 }
 
 func (ws *webScraper) getHTML(ctx context.Context, URL string) (string, error) {
-    ctx, cancel := context.WithTimeout(ctx, 25 * time.Second)
+    ctx, cancel := context.WithTimeout(ctx, 5 * time.Second)
     defer cancel()
 
     req, err := http.NewRequestWithContext(ctx, "GET", URL, nil)
@@ -419,7 +438,7 @@ func (ws *webScraper) getHTML(ctx context.Context, URL string) (string, error) {
 }
 
 func (ws *webScraper) processSitemap(baseURL, sitemapURL string) ([]string, error) {
-    urls, err := getSitemapURLs(sitemapURL, ws.client, ws.maxLinksInPage)
+    urls, err := getSitemapURLs(sitemapURL, ws.client, ws.cfg.MaxLinksInPage)
 	if err != nil {
 		return nil, err
 	}
@@ -545,7 +564,7 @@ func decodeSitemap(r io.Reader, limiter int) ([]string, error) {
 	return urls, nil
 }
 
-func isSameOrigin(rawURL, baseURL string) (bool, error) {
+func isSameOrigin(rawURL string, baseURL string) (bool, error) {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
 		return false, err
@@ -555,5 +574,6 @@ func isSameOrigin(rawURL, baseURL string) (bool, error) {
 	if err != nil || !strings.Contains(parsedBaseURL.Hostname(), parsedURL.Hostname()) {
 		return false, err
 	}
+
 	return true, nil
 }

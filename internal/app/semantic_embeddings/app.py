@@ -1,9 +1,6 @@
 import torch
 from flask import Flask, request, jsonify
 from transformers import BertConfig, BertModel, BertTokenizer
-from summarizer import Summarizer
-
-summarizer = Summarizer()
 
 app = Flask(__name__)
 
@@ -56,19 +53,6 @@ def get_embeddings():
     matrix_vec = get_sentence_embeddings(doc.text)
     return jsonify({'vec': matrix_vec})
 
-
-@app.route('/summarize', methods=['POST'])
-def summarize():
-    doc_data = request.get_json()
-    if not doc_data or 'text' not in doc_data:
-        return jsonify({'error': 'Invalid input'}), 400
-
-    text = doc_data['text']
-    max_sentence = doc_data['max_sentence']
-    summary = summarizer(text, max_sentence=max_sentence)
-    if not summary:
-        return jsonify({'error': 'Failed to summarize'}), 500
-    return jsonify({'summary': summary})
 
 # Run the Flask app
 if __name__ == '__main__':
