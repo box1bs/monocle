@@ -42,12 +42,12 @@ type webScraper struct {
 	client         	*http.Client
 	visited        	*sync.Map
     rateLimiter    	*RateLimiter
+	cfg 		  	*ScrapeConfig
 	globalCtx		context.Context
 	idx				indexer
 	Pool           	workerPool
 	write 			func(string)
 	vectorize		func(string, context.Context) ([][]float64, error)
-	cfg 		  	ScrapeConfig
 }
 
 type ScrapeConfig struct {
@@ -58,7 +58,7 @@ type ScrapeConfig struct {
 
 const sitemap = "sitemap.xml"
 
-func NewScraper(mp *sync.Map, rateLimiter *RateLimiter, c context.Context, idx indexer, wp workerPool, write func(string), vectorize func(string, context.Context) ([][]float64, error), cfg ScrapeConfig) *webScraper {
+func NewScraper(mp *sync.Map, rateLimiter *RateLimiter, c context.Context, idx indexer, wp workerPool, write func(string), vectorize func(string, context.Context) ([][]float64, error), cfg *ScrapeConfig) *webScraper {
 	return &webScraper{
 		client: &http.Client{
 			Timeout: 5 * time.Second,

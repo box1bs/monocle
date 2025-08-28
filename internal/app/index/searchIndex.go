@@ -84,7 +84,7 @@ func (idx *SearchIndex) Index(config *configs.ConfigData, global context.Context
 		rl = web.NewRateLimiter(config.Rate)
 		defer rl.Shutdown()
 	}
-	spider := web.NewScraper(idx.visitedUrls, rl, global, idx, wp, idx.logger.Write, idx.vectorizer.vectorize, web.ScrapeConfig{
+	spider := web.NewScraper(idx.visitedUrls, rl, global, idx, wp, idx.logger.Write, idx.vectorizer.vectorize, &web.ScrapeConfig{
 		Depth:          config.MaxDepth,
 		MaxLinksInPage: config.MaxLinksInPage,
 		OnlySameDomain: config.OnlySameDomain,
