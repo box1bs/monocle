@@ -9,6 +9,7 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/google/uuid"
+	"slices"
 )
 
 type IndexRepository struct {
@@ -87,4 +88,69 @@ func (ir *IndexRepository) GetDocumentsByWord(word int) (map[uuid.UUID]int, erro
         }
 		return nil
 	})
+}
+
+func (ir *IndexRepository) IndexNGrams(nGrams ...string) error {
+	for _, nGram := range nGrams {
+		key := fmt.Sprintf("ngram:%s", string(nGram))
+		err := ir.db.Update(func(txn *badger.Txn) error {
+			item, err := txn.Get([]byte(key))
+			if err == badger.ErrKeyNotFound {
+				return txn.Set([]byte(key), []byte(nGram))
+			} else if err != nil {
+				return err
+			}
+			val, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			words := strings.Split(string(val), ",")
+			if slices.Contains(words, nGram) {
+				return nil
+			}
+			words = append(words, nGram)
+			return txn.Set([]byte(key), []byte(strings.Join(words, ",")))
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (ir *IndexRepository) GetWordsByNGrams(nGrams ...string) ([]string, error) {
+	wordSet := make(map[string]struct{})
+	err := ir.db.View(func(txn *badger.Txn) error {
+		for _, nGram := range nGrams {
+			key := fmt.Sprintf("ngram:%s", nGram)
+			item, err := txn.Get([]byte(key))
+			if err == badger.ErrKeyNotFound {
+				continue
+			} else if err != nil {
+				return err
+			}
+			val, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			words := strings.SplitSeq(string(val), ",")
+			for word := range words {
+				if _, exists := wordSet[word]; exists {
+					continue
+				}
+				wordSet[word] = struct{}{}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	words := make([]string, 0, len(wordSet))
+	for word := range wordSet {
+		words = append(words, word)
+	}
+	return words, nil
 }

@@ -1,15 +1,17 @@
 package textHandling
 
-import "strings"
+import (
+	"strings"
+)
 
 type englishStemmer struct {
-	step1aRules map[string]string
-	step1bRules map[string]string
-	step2Rules  map[string]string
-	step3Rules  map[string]string
-	step4Rules  map[string]string
-	stopWords 	*stopWords
-	tokenizer   *tokenizer
+	step1aRules 	map[string]string
+	step1bRules 	map[string]string
+	step2Rules  	map[string]string
+	step3Rules  	map[string]string
+	step4Rules  	map[string]string
+	stopWords 		*stopWords
+	tokenizer   	*tokenizer
 }
 
 type stopWords struct {
@@ -142,19 +144,24 @@ func (s *englishStemmer) measure(word string) int {
     return m
 }
 
-func (s *englishStemmer) TokenizeAndStem(text string) []string {
+func (s *englishStemmer) TokenizeAndStem(text string, index func(string) error) ([]string, error) {
 	tokens := s.tokenizer.entityTokenize(text)
 
 	stemmedTokens := []string{}
 	for _, token := range tokens {
 		if token.Type == WORD || token.Type == ALPHANUMERIC {
+			if index != nil {
+				if err := index(token.Value); err != nil {
+					return nil, err
+				}
+			}
 			stemmedTokens = append(stemmedTokens, s.stem(token.Value))
 		} else if token.Type != WHITESPACE {
 			stemmedTokens = append(stemmedTokens, token.Value)
 		}
 	}
 
-	return stemmedTokens
+	return stemmedTokens, nil
 }
 
 func (s *englishStemmer) stem(word string) string {

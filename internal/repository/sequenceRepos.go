@@ -2,12 +2,11 @@ package repository
 
 import (
 	"strconv"
-	"strings"
 
 	"github.com/dgraph-io/badger/v3"
 )
 
-func (ir *IndexRepository) TransferOrSaveToSequence(words []string, canSave bool) ([]int, error) {
+func (ir *IndexRepository) TransferOrSaveToSequence(canSave bool, words ...string) ([]int, error) {
 	var ids []int
     err := ir.db.Update(func(txn *badger.Txn) error {
         for _, word := range words {
@@ -52,31 +51,12 @@ func (ir *IndexRepository) TransferOrSaveToSequence(words []string, canSave bool
     return ids, nil
 }
 
-func (ir *IndexRepository) GetDict() ([]string, error) {
-    var dict []string
-    err := ir.db.View(func(txn *badger.Txn) error {
-        iter := txn.NewIterator(badger.DefaultIteratorOptions)
-        defer iter.Close()
-
-        for iter.Seek([]byte(WordKeyPrefix)); iter.ValidForPrefix([]byte(WordKeyPrefix)); iter.Next() {
-            item := iter.Item()
-            dict = append(dict, strings.TrimPrefix(string(item.Key()), WordKeyPrefix))
-        }
-
-        return nil
-    })
-    if err != nil {
-        return nil, err
-    }
-    return dict, nil
-}
-
 func (ir *IndexRepository) getLastId() (int, error) {
 	var maxId int
     err := ir.db.View(func(txn *badger.Txn) error {
         item, err := txn.Get([]byte("max_id"))
         if err == badger.ErrKeyNotFound {
-            maxId = 0
+            maxId = 1
             return nil
         } else if err != nil {
             return err

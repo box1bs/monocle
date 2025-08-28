@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/box1bs/Saturday/configs"
-	"github.com/box1bs/Saturday/internal/app/index/spell_checker"
 	"github.com/box1bs/Saturday/internal/app/index/tree"
 	"github.com/box1bs/Saturday/internal/app/scraper"
 	"github.com/box1bs/Saturday/internal/model"
@@ -23,18 +22,24 @@ type repository interface {
 	SaveVisitedUrls(*sync.Map) error
 	IndexDocument(uuid.UUID, []int) error
 	GetDocumentsByWord(int) (map[uuid.UUID]int, error)
+	IndexNGrams(...string) error
+	GetWordsByNGrams(...string) ([]string, error)
 
 	SaveDocument(doc *model.Document) error
 	GetDocumentByID(uuid.UUID) (*model.Document, error)
 	GetAllDocuments() ([]*model.Document, error)
 	GetDocumentsCount() (int, error)
 
-	GetDict() ([]string, error)
-	TransferOrSaveToSequence([]string, bool) ([]int, error)
+	TransferOrSaveToSequence(bool, ...string) ([]int, error)
+}
+
+type spellChecker interface {
+	BreakToNGrams(string) []string
+	BestReplacement(string, []string) string
 }
 
 type stemmer interface {
-	TokenizeAndStem(string) []string
+	TokenizeAndStem(string, func(string) error) ([]string, error)
 }
 
 type logger interface {
@@ -47,6 +52,7 @@ type SearchIndex struct {
 	root 		*tree.TreeNode
 	visitedUrls *sync.Map
 	vectorizer  *vectorizer
+	sc        	spellChecker
 	indexRepos  repository
 	stemmer   	stemmer
 	logger    	logger
@@ -55,12 +61,13 @@ type SearchIndex struct {
 	isUpToDate 	bool
 }
 
-func NewSearchIndex(ir repository, stemmer stemmer, l logger) *SearchIndex {
+func NewSearchIndex(sc spellChecker, ir repository, stemmer stemmer, l logger) *SearchIndex {
 	return &SearchIndex{
 		mu: new(sync.RWMutex),
 		root: tree.NewNode("/"),
 		visitedUrls: new(sync.Map),
 		vectorizer: newVectorizer(),
+		sc: sc,
 		indexRepos: ir,
 		stemmer: stemmer,
 		logger: l,
@@ -137,23 +144,27 @@ func (idx *SearchIndex) Search(query string, quorum float64, maxLen int) []*mode
 	
 	rank := make(map[uuid.UUID]requestRanking)
 
-	queryTerms := idx.stemmer.TokenizeAndStem(query)
-	terms, err := idx.indexRepos.TransferOrSaveToSequence(queryTerms, false)
+	queryTerms, err := idx.stemmer.TokenizeAndStem(query, nil)
+	if err != nil || len(queryTerms) == 0 {
+		return nil
+	}
+	terms, err := idx.indexRepos.TransferOrSaveToSequence(false, queryTerms...)
 	if err != nil || len(terms) == 0 {
 		return nil
 	}
 
 	index := make(map[int]map[uuid.UUID]int)
-	dict, err := idx.indexRepos.GetDict()
-	if err != nil {
-		log.Println(err)
-		return nil
-	}
 	for i := range terms {
 		if terms[i] == 0 {
-			sc := spellChecker.NewSpellChecker(2)
-			el := sc.BestReplacement(queryTerms[i], dict)
-			num, err := idx.indexRepos.TransferOrSaveToSequence([]string{el}, false)
+			condidates, err := idx.indexRepos.GetWordsByNGrams(idx.sc.BreakToNGrams(queryTerms[i])...)
+			if err != nil || len(condidates) == 0 {
+				continue
+			}
+			stemmed, err := idx.stemmer.TokenizeAndStem(idx.sc.BestReplacement(queryTerms[i], condidates), nil)
+			if err != nil || len(stemmed) == 0 {
+				continue
+			}
+			num, err := idx.indexRepos.TransferOrSaveToSequence(false, stemmed[0])
 			if err != nil || len(num) == 0 {
 				continue
 			}
@@ -291,8 +302,15 @@ func (idx *SearchIndex) GetCurrentUrlsCrawled() int32 {
 func (idx *SearchIndex) HandleDocumentWords(text string) ([]int, error) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
+
+	stemmed, err := idx.stemmer.TokenizeAndStem(text, func(s string) error { // костыль, временный(нет)
+		return idx.indexRepos.IndexNGrams(idx.sc.BreakToNGrams(s)...)
+	})
+	if err != nil || len(stemmed) == 0 {
+		return nil, err
+	}
 	
-	return idx.indexRepos.TransferOrSaveToSequence(idx.stemmer.TokenizeAndStem(text), true)
+	return idx.indexRepos.TransferOrSaveToSequence(true, stemmed...)
 }
 
 func calcCosineSimilarity(vec1, vec2 []float64) float64 {

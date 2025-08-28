@@ -11,8 +11,6 @@ import (
 
 const (
     DocumentKeyPrefix = "doc:"
-    WordKeyPrefix = "word:"
-    IdKeyPrefix = "id:"
     WordDocumentKeyFormat = "%d_%s"
 )
 

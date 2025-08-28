@@ -12,10 +12,11 @@ import (
 
 	"github.com/box1bs/Saturday/configs"
 	"github.com/box1bs/Saturday/internal/app/index"
+	"github.com/box1bs/Saturday/internal/app/index/spellChecker"
+	"github.com/box1bs/Saturday/internal/app/index/textHandling"
 	"github.com/box1bs/Saturday/internal/model"
 	"github.com/box1bs/Saturday/internal/repository"
 	"github.com/box1bs/Saturday/logs/logger"
-	"github.com/box1bs/Saturday/pkg/textHandling"
 	"github.com/dgraph-io/badger/v3"
 )
 
@@ -63,7 +64,7 @@ func main() {
 		os.Exit(0)
 	}()
 	
-	i := index.NewSearchIndex(ir, textHandling.NewEnglishStemmer(), logger)
+	i := index.NewSearchIndex(spellChecker.NewSpellChecker(2, 3), ir, textHandling.NewEnglishStemmer(), logger) // прокинуть константы через json
 	if err := i.Index(cfg, ctx); err != nil {
 		panic(err)
 	}
@@ -79,7 +80,7 @@ func main() {
 			return
 		}
 		t := time.Now()
-		Present(i.Search(query, 0.01, 50))
+		Present(i.Search(query, 0.01, 100))
 		fmt.Printf("--Search time: %v--\n", time.Since(t))
 	}
 }
