@@ -1,18 +1,18 @@
-package web
+package scraper
 
 import (
 	"sync"
 	"time"
 )
 
-type RateLimiter struct {
+type rateLimiter struct {
 	token chan struct{}
 	quit  chan struct{}
 	wg    *sync.WaitGroup
 }
 
-func NewRateLimiter(rate int) *RateLimiter {
-	rl := &RateLimiter{
+func newRateLimiter(rate int) *rateLimiter {
+	rl := &rateLimiter{
 		token: make(chan struct{}),
 		quit:  make(chan struct{}),
 		wg:    new(sync.WaitGroup),
@@ -22,7 +22,7 @@ func NewRateLimiter(rate int) *RateLimiter {
 	return rl
 }
 
-func (rl *RateLimiter) handleLimits(requestsPerSecond int) {
+func (rl *rateLimiter) handleLimits(requestsPerSecond int) {
 	defer rl.wg.Done()
 	tic := time.NewTicker(time.Duration(1e9 / float64(requestsPerSecond)))
 	defer tic.Stop()
@@ -41,17 +41,11 @@ func (rl *RateLimiter) handleLimits(requestsPerSecond int) {
 	}
 }
 
-func (rl *RateLimiter) getToken() {
+func (rl *rateLimiter) getToken() {
 	<-rl.token
 }
 
-func (rl *RateLimiter) tryToGetToken() {
-	if rl != nil {
-		rl.getToken()
-	}
-}
-
-func (rl *RateLimiter) Shutdown() {
+func (rl *rateLimiter) shutdown() {
 	close(rl.quit)
 	rl.wg.Wait()
 	close(rl.token)

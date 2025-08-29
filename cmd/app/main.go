@@ -11,9 +11,8 @@ import (
 	"time"
 
 	"github.com/box1bs/Saturday/configs"
-	"github.com/box1bs/Saturday/internal/app/index"
-	"github.com/box1bs/Saturday/internal/app/index/spellChecker"
-	"github.com/box1bs/Saturday/internal/app/index/textHandling"
+	"github.com/box1bs/Saturday/internal/app/indexer"
+	"github.com/box1bs/Saturday/internal/app/searcher"
 	"github.com/box1bs/Saturday/internal/model"
 	"github.com/box1bs/Saturday/internal/repository"
 	"github.com/box1bs/Saturday/logs/logger"
@@ -64,12 +63,17 @@ func main() {
 		os.Exit(0)
 	}()
 	
-	i := index.NewSearchIndex(spellChecker.NewSpellChecker(2, 3), ir, textHandling.NewEnglishStemmer(), logger) // прокинуть константы через json
-	if err := i.Index(cfg, ctx); err != nil {
+	i := indexer.NewIndexer(ir, nil, logger, 3, 2)
+	i.Index(cfg, ctx)
+
+	count, err := i.GetDocumentsCount()
+	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("Index built with %d urls. Enter search queries (Ctrl+C to exit):\n", i.UrlsCrawled)
+	fmt.Printf("Index built with %d documents. Enter search queries (Ctrl+C to exit):\n", count)
+
+	s := searcher.NewSearcher(i)
 
 	reader := bufio.NewReader(os.Stdin)
 	for {
@@ -80,7 +84,7 @@ func main() {
 			return
 		}
 		t := time.Now()
-		Present(i.Search(query, 0.01, 100))
+		Present(s.Search(query, 0.01, 100))
 		fmt.Printf("--Search time: %v--\n", time.Since(t))
 	}
 }

@@ -1,27 +1,23 @@
-package web
+package scraper
 
 import (
-	"encoding/xml"
-	"errors"
 	"io"
 	"regexp"
-	"unicode"
 
-	"github.com/box1bs/Saturday/internal/app/index/tree"
+	"github.com/box1bs/Saturday/internal/app/scraper/tree"
 	"github.com/box1bs/Saturday/internal/model"
 	"github.com/box1bs/Saturday/pkg/parser"
-	"golang.org/x/net/html"
-
+	
 	"bufio"
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
-
+	
+	"golang.org/x/net/html"
 	"github.com/google/uuid"
 )
 
@@ -29,36 +25,38 @@ var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 var urlRegex = regexp.MustCompile(`^https?://`)
 
 type indexer interface {
-    IncUrlsCounter()
-    HandleDocumentWords(string) ([]int, error)
-    AddDocument(*model.Document, []int)
+    HandleDocumentWords(*model.Document, string) error
 }
 
 type workerPool interface {
 	Submit(func())
+	Wait()
+	Stop()
 }
 
 type webScraper struct {
 	client         	*http.Client
 	visited        	*sync.Map
-    rateLimiter    	*RateLimiter
-	cfg 		  	*ScrapeConfig
+    rateLimiter    	*rateLimiter
+	cfg 		  	*ConfigData
+	pool           	workerPool
+	idx 			indexer
 	globalCtx		context.Context
-	idx				indexer
-	Pool           	workerPool
 	write 			func(string)
 	vectorize		func(string, context.Context) ([][]float64, error)
 }
 
-type ScrapeConfig struct {
-	Depth           int
+type ConfigData struct {
+	StartURLs     	[]string
+	Depth       	int
 	MaxLinksInPage 	int
-    OnlySameDomain 	bool
+	Rate           	int
+	OnlySameDomain  bool
 }
 
 const sitemap = "sitemap.xml"
 
-func NewScraper(mp *sync.Map, rateLimiter *RateLimiter, c context.Context, idx indexer, wp workerPool, write func(string), vectorize func(string, context.Context) ([][]float64, error), cfg *ScrapeConfig) *webScraper {
+func NewScraper(mp *sync.Map, cfg *ConfigData, wp workerPool, idx indexer, c context.Context, write func(string), vectorize func(string, context.Context) ([][]float64, error)) *webScraper {
 	return &webScraper{
 		client: &http.Client{
 			Timeout: 5 * time.Second,
@@ -69,14 +67,28 @@ func NewScraper(mp *sync.Map, rateLimiter *RateLimiter, c context.Context, idx i
 			},
 		},
 		visited:        mp,
-        rateLimiter:    rateLimiter,
-		idx:            idx,
-		Pool:           wp,
+        rateLimiter:    newRateLimiter(cfg.Rate),
+		cfg: 			cfg,
+		pool:           wp,
+		idx: 			idx,
+		globalCtx:		c,
 		write: 			write,
 		vectorize:		vectorize,
-		globalCtx:		c,
-		cfg: 			cfg,
 	}
+}
+
+func (ws *webScraper) Run() {
+	defer ws.rateLimiter.shutdown()
+	for _, url := range ws.cfg.StartURLs {
+		node := tree.NewNode(url)
+		ws.pool.Submit(func() {
+			ctx, cancel := context.WithTimeout(ws.globalCtx, 20*time.Second)
+			defer cancel()
+			ws.ScrapeWithContext(ctx, url, node, 0)
+		})
+	}
+	ws.pool.Wait()
+	ws.pool.Stop()
 }
 
 func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, parent *tree.TreeNode, depth int) {
@@ -93,7 +105,7 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
     
     normalized, err := normalizeUrl(currentURL)
     if err != nil {
-    	log.Printf("Error normalizing URL %s: %v\n", currentURL, err)
+    	//log.Printf("Error normalizing URL %s: %v\n", currentURL, err)
         return
     }
     
@@ -134,7 +146,7 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
             if ws.cfg.OnlySameDomain && same {
                 child.SetRules(parent.GetRules())
             }
-            ws.Pool.Submit(func() {
+            ws.pool.Submit(func() {
 				c, cancel := context.WithTimeout(ws.globalCtx, 20 * time.Second)
 				defer cancel()
                 ws.ScrapeWithContext(c, link, child, depth+1)
@@ -142,17 +154,16 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
         }
     }
 
-    ws.rateLimiter.tryToGetToken()
+    ws.rateLimiter.getToken()
     
 	c, cancel := context.WithTimeout(ctx, time.Second * 5)
 	defer cancel()
     doc, err := ws.getHTML(c, currentURL)
     if err != nil || doc == "" {
-		//log.Printf("error parsing page: %s\n", currentURL)
+		ws.write(fmt.Sprintf("error parsing page: %s\n", currentURL))
         return
     }
     
-    ws.idx.IncUrlsCounter()
 	ws.write(currentURL)
 
     document := &model.Document{
@@ -170,15 +181,14 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 	defer cancel()
 	document.Vec, err = ws.vectorize(content, c)
 	if err != nil {
-		log.Printf("error vectorizing page: %s with error %d\n", currentURL, err)
+		ws.write(fmt.Sprintf("error vectorizing page: %s with error %v\n", currentURL, err))
 		return
 	}
 
-	words, err := ws.idx.HandleDocumentWords(content)
-	if err != nil {
+    if err := ws.idx.HandleDocumentWords(document, content); err != nil {
+		ws.write(fmt.Sprintf("error handling words for page: %s with error %v\n", currentURL, err))
 		return
 	}
-    ws.idx.AddDocument(document, words)
 
     for _, link := range links {
 		select {
@@ -196,7 +206,7 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
         if ws.cfg.OnlySameDomain && same {
             child.SetRules(parent.GetRules())
         }
-        ws.Pool.Submit(func() {
+        ws.pool.Submit(func() {
 			c, cancel := context.WithTimeout(ws.globalCtx, 20 * time.Second)
 			defer cancel()
         	ws.ScrapeWithContext(c, link, child, depth+1)
@@ -250,7 +260,7 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL 
 			if tokenizer.Err() == io.EOF {
 				break
 			}
-			log.Println("error parsing HTML with url: " + baseURL)
+			ws.write("error parsing HTML with url: " + baseURL)
 			break
 		}
 
@@ -453,127 +463,4 @@ func (ws *webScraper) processSitemap(baseURL, sitemapURL string) ([]string, erro
 	}
 
     return nextUrls, nil
-}
-
-func makeAbsoluteURL(rawURL, baseURL string) (string, error) {
-	if rawURL == "" {
-		return "", errors.New("empty url")
-	}
-
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return "", err
-	}
-
-	if u.IsAbs() {
-		return u.String(), nil
-	}
-
-	if u.Host == "" && !strings.HasPrefix(rawURL, "/") && !strings.HasPrefix(rawURL, "./") && !strings.HasPrefix(rawURL, "../") {
-		u2, err := url.Parse("https://" + rawURL)
-		if err == nil && u2.Host != "" {
-			return u2.String(), nil
-		}
-	}
-
-	if u.Host != "" && u.Scheme == "" {
-		u.Scheme = "https"
-		return u.String(), nil
-	}
-
-	base, err := url.Parse(baseURL)
-	if err != nil {
-		return "", err
-	}
-	resolved := base.ResolveReference(u)
-	return resolved.String(), nil
-}
-
-func normalizeUrl(rawUrl string) (string, error) {
-    cleanUrl := strings.Map(func(r rune) rune {
-        if unicode.IsSpace(r) || unicode.IsControl(r) {
-            return -1
-        }
-        return r
-    }, rawUrl)
-    
-    uri := urlRegex.ReplaceAllString(cleanUrl, "")
-    
-    parsedUrl, err := url.Parse(uri)
-    if err != nil {
-        return "", err
-    }
-
-    parsedUrl = cleanUTMParams(parsedUrl)
-    parsedUrl.Host = strings.TrimPrefix(parsedUrl.Host, "www.")
-    
-    var normalized strings.Builder
-    normalized.WriteString(strings.ToLower(parsedUrl.Host))
-    normalized.WriteString(strings.ToLower(parsedUrl.Path))
-    
-    result := normalized.String()
-    return strings.TrimSuffix(result, "/"), nil
-}
-
-func cleanUTMParams(rawURL *url.URL) *url.URL {
-	query := rawURL.Query()
-	for key := range query {
-		if strings.HasPrefix(key, "utm_") {
-			query.Del(key)
-		}
-	}
-	rawURL.RawQuery = query.Encode()
-	return rawURL
-}
-
-func getSitemapURLs(URL string, cli *http.Client, limiter int) ([]string, error) {
-	resp, err := cli.Get(URL)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	return decodeSitemap(resp.Body, limiter)
-}
-
-func decodeSitemap(r io.Reader, limiter int) ([]string, error) {
-	var urls []string
-	dec := xml.NewDecoder(r)
-	for {
-		token, err := dec.Token()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		if element, ok := token.(xml.StartElement); ok {
-			if element.Name.Local == "loc" {
-				var url string
-				if err := dec.DecodeElement(&url, &element); err != nil {
-					continue
-				}
-				urls = append(urls, url)
-				if len(urls) >= limiter {
-					return urls, nil
-				}
-			}
-		}
-	}
-
-	return urls, nil
-}
-
-func isSameOrigin(rawURL string, baseURL string) (bool, error) {
-	parsedURL, err := url.Parse(rawURL)
-	if err != nil {
-		return false, err
-	}
-
-	parsedBaseURL, err := url.Parse(baseURL)
-	if err != nil || !strings.Contains(parsedBaseURL.Hostname(), parsedURL.Hostname()) {
-		return false, err
-	}
-
-	return true, nil
 }

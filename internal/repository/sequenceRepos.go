@@ -6,23 +6,52 @@ import (
 	"github.com/dgraph-io/badger/v3"
 )
 
-func (ir *IndexRepository) TransferOrSaveToSequence(canSave bool, words ...string) ([]int, error) {
+func (ir *IndexRepository) TransferToSequence(words ...string) ([]int, error) {
 	var ids []int
+    err := ir.db.View(func(txn *badger.Txn) error {
+        for _, word := range words {
+            item, err := txn.Get([]byte("word:" + word))
+            if err == badger.ErrKeyNotFound {
+                ids = append(ids, 0)
+                continue
+            } else if err != nil {
+                return err
+            }
+            idBytes, err := item.ValueCopy(nil)
+            if err != nil {
+                return err
+            }
+            id, err := strconv.Atoi(string(idBytes))
+            if err != nil {
+                return err
+            }
+            ids = append(ids, id)
+        }
+        return nil
+    })
+    if err != nil {
+        return nil, err
+    }
+    return ids, nil
+}
+
+func (ir *IndexRepository) SaveToSequence(words ...string) ([]int, error) {
+    sequence := make([]int, 0)
     err := ir.db.Update(func(txn *badger.Txn) error {
         for _, word := range words {
             key := []byte(word)
             item, err := txn.Get(key)
             if err == nil {
-                idBytes, err := item.ValueCopy(nil)
+                val, err := item.ValueCopy(nil)
                 if err != nil {
                     return err
                 }
-                id, err := strconv.Atoi(string(idBytes))
+                id, err := strconv.Atoi(string(val))
                 if err != nil {
                     return err
                 }
-                ids = append(ids, id)
-            } else if err == badger.ErrKeyNotFound && canSave {
+                sequence = append(sequence, id)
+            } else if err == badger.ErrKeyNotFound {
                 maxId, err := ir.getLastId()
                 if err != nil {
                     return err
@@ -36,9 +65,7 @@ func (ir *IndexRepository) TransferOrSaveToSequence(canSave bool, words ...strin
                 if err != nil {
                     return err
                 }
-                ids = append(ids, newId)
-            } else if err == badger.ErrKeyNotFound && !canSave {
-                ids = append(ids, 0)
+                sequence = append(sequence, newId)
             } else {
                 return err
             }
@@ -48,7 +75,7 @@ func (ir *IndexRepository) TransferOrSaveToSequence(canSave bool, words ...strin
     if err != nil {
         return nil, err
     }
-    return ids, nil
+    return sequence, nil
 }
 
 func (ir *IndexRepository) getLastId() (int, error) {

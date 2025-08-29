@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-type englishStemmer struct {
+type EnglishStemmer struct {
 	step1aRules 	map[string]string
 	step1bRules 	map[string]string
 	step2Rules  	map[string]string
@@ -44,8 +44,8 @@ func (sw *stopWords) isStopWord(word string) bool {
     return exists
 }
 
-func NewEnglishStemmer() *englishStemmer {
-	return &englishStemmer{
+func NewEnglishStemmer() *EnglishStemmer {
+	return &EnglishStemmer{
 		step1aRules: map[string]string{
 			"sses": "ss", // possesses -> possess
 			"ies":  "i",  // ponies -> poni
@@ -120,11 +120,11 @@ func NewEnglishStemmer() *englishStemmer {
 	}
 }
 
-func (s *englishStemmer) hasSuffix(word, suffix string) bool {
+func (s *EnglishStemmer) hasSuffix(word, suffix string) bool {
 	return len(word) > len(suffix) && strings.HasSuffix(word, suffix)
 }
 
-func (s *englishStemmer) measure(word string) int {
+func (s *EnglishStemmer) measure(word string) int {
     isVowel := func(c byte) bool {
         return strings.ContainsRune("aeiou", rune(c))
     }
@@ -144,7 +144,7 @@ func (s *englishStemmer) measure(word string) int {
     return m
 }
 
-func (s *englishStemmer) TokenizeAndStem(text string, index func(string) error) ([]string, error) {
+func (s *EnglishStemmer) TokenizeAndStem(text string, index func(string) error) ([]string, error) {
 	tokens := s.tokenizer.entityTokenize(text)
 
 	stemmedTokens := []string{}
@@ -164,7 +164,7 @@ func (s *englishStemmer) TokenizeAndStem(text string, index func(string) error) 
 	return stemmedTokens, nil
 }
 
-func (s *englishStemmer) stem(word string) string {
+func (s *EnglishStemmer) stem(word string) string {
 	if s.stopWords.isStopWord(word) {
 		return ""
 	}

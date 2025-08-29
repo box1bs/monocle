@@ -1,4 +1,4 @@
-package index
+package searcher
 
 import (
 	"bytes"
@@ -17,7 +17,7 @@ type VecResponce struct {
 	Vec 	[][]float64 	`json:"vec"`
 }
 
-func (v *vectorizer) vectorize(text string, ctx context.Context) ([][]float64, error) {
+func (v *vectorizer) Vectorize(text string, ctx context.Context) ([][]float64, error) {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(map[string]string{
 		"text": text,
