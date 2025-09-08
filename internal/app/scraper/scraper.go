@@ -94,7 +94,6 @@ func (ws *webScraper) Run() {
 func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, parent *tree.TreeNode, depth int) {
     select {
 	case <-ctx.Done():
-		//log.Println("task time exided")
 		return
 	default:
     }
@@ -105,54 +104,37 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
     
     normalized, err := normalizeUrl(currentURL)
     if err != nil {
-    	//log.Printf("Error normalizing URL %s: %v\n", currentURL, err)
         return
     }
     
     if _, loaded := ws.visited.LoadOrStore(normalized, struct{}{}); loaded {
         return
     }
-    
-    //log.Println("Parsing: " + currentURL)
 
-    if rules, err := parser.FetchRobotsTxt(ctx, currentURL, ws.client); rules != "" && err == nil {
-        robotsTXT := parser.ParseRobotsTxt(rules)
-        parent.SetRules(robotsTXT)
-    } else if parent.GetRules() == nil {
-        uri, err := url.Parse(currentURL)
-		if err != nil {
-			return
-		}
-		if rules, err = parser.FetchRobotsTxt(ctx, uri.Scheme + "://" + uri.Host + "/", ws.client); rules != "" && err == nil {
+	urls := []string{}
+
+	errCh := make(chan error)
+	go func() {
+		defer close(errCh)
+		if rules, err := parser.FetchRobotsTxt(ctx, currentURL, ws.client); rules != "" && err == nil {
 			robotsTXT := parser.ParseRobotsTxt(rules)
 			parent.SetRules(robotsTXT)
-		}
-    }
-    
-    if urls, err := ws.haveSitemap(currentURL); urls != nil && err == nil {
-        for _, link := range urls {
-			select {
-			case <-ctx.Done():
-				//log.Println("task time exceeded")
-				return
-			default:
-			}
-            child := tree.NewNode(link)
-            parent.AddChild(child)
-			same, err := isSameOrigin(link, currentURL)
+		} else if parent.GetRules() == nil {
+			uri, err := url.Parse(currentURL)
 			if err != nil {
-				continue
+				errCh <- err
+				return
 			}
-            if ws.cfg.OnlySameDomain && same {
-                child.SetRules(parent.GetRules())
-            }
-            ws.pool.Submit(func() {
-				c, cancel := context.WithTimeout(ws.globalCtx, 20 * time.Second)
-				defer cancel()
-                ws.ScrapeWithContext(c, link, child, depth+1)
-            })
-        }
-    }
+			if rules, err = parser.FetchRobotsTxt(ctx, uri.Scheme + "://" + uri.Host + "/", ws.client); rules != "" && err == nil {
+				robotsTXT := parser.ParseRobotsTxt(rules)
+				parent.SetRules(robotsTXT)
+			}
+		}
+		
+		if urls, err = ws.haveSitemap(currentURL); urls == nil || err != nil {
+			errCh <- err
+		}
+	}()
 
     ws.rateLimiter.getToken()
     
@@ -171,35 +153,52 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
         URL: currentURL,
     }
 
-	c, cancel = context.WithTimeout(ctx, time.Second * 5)
-	defer cancel()
-    links, content, header := ws.parseHTMLStream(c, doc, currentURL, parent.GetRules())
-
-	c, cancel = context.WithTimeout(ctx, time.Second * 5)
-	defer cancel()
-	document.WordVec, err = ws.vectorize(content, c)
-	if err != nil {
-		ws.write(fmt.Sprintf("error vectorizing page: %s with error %v\n", currentURL, err))
-		return
+	if err = <- errCh; err != nil {
+		ws.write(fmt.Sprintf("error fetching robots.txt or sitemap.xml for page: %s with error %v\n", currentURL, err))
 	}
 
 	c, cancel = context.WithTimeout(ctx, time.Second * 5)
 	defer cancel()
+    links, content, header := ws.parseHTMLStream(c, doc, currentURL, parent.GetRules())
+
+	if len(urls) > 0 {
+		links = append(links, urls...)
+	}
+
+	c, cancel = context.WithTimeout(ctx, time.Second * 5)
+	defer cancel()
+
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		document.WordVec, err = ws.vectorize(content, c)
+		if err != nil {
+			ws.write(fmt.Sprintf("error vectorizing page: %s with error %v\n", currentURL, err))
+			return
+		}
+	}()
+
 	document.TitleVec, err = ws.vectorize(header, c)
 	if err != nil {
 		ws.write(fmt.Sprintf("error vectorizing title for page: %s with error %v\n", currentURL, err))
 		return
 	}
 
+	wg.Wait()
+
     if err := ws.idx.HandleDocumentWords(document, header, content); err != nil {
 		ws.write(fmt.Sprintf("error handling words for page: %s with error %v\n", currentURL, err))
+		return
+	}
+
+	if len(links) == 0 {
 		return
 	}
 
     for _, link := range links {
 		select {
 		case <-ctx.Done():
-			//log.Println("task time exided")
 			return
 		default:
 		}

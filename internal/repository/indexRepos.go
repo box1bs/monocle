@@ -59,9 +59,9 @@ func (ir *IndexRepository) SaveVisitedUrls(visitedURLs *sync.Map) error {
 
 func (ir *IndexRepository) IndexDocumentWords(docID uuid.UUID, words, titleWords []int) error {
 	errCh := make(chan error)
-	wg := new(sync.WaitGroup)
-	wg.Add(1)
+	ir.wg.Add(1)
 	go func() {
+		defer ir.wg.Done()
 		wordFreq := make(map[int]int)
 		for _, word := range words {
 			wordFreq[word]++
@@ -80,7 +80,7 @@ func (ir *IndexRepository) IndexDocumentWords(docID uuid.UUID, words, titleWords
 	}()
 
 	go func() {
-		wg.Wait()
+		ir.wg.Wait()
 		close(errCh)
 	}()
 
@@ -112,10 +112,9 @@ func (ir *IndexRepository) GetDocumentsByWord(word int) (map[uuid.UUID]int, map[
 		it1 := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it1.Close()
 		errCh := make(chan error)
-		wg := new(sync.WaitGroup)
-		wg.Add(1)
+		ir.wg.Add(1)
 		go func() {
-			defer wg.Done()
+			defer ir.wg.Done()
 			for it1.Seek(wprefix); it1.ValidForPrefix(wprefix); it1.Next() {
 				item := it1.Item()
 				key := string(item.Key())
@@ -134,10 +133,12 @@ func (ir *IndexRepository) GetDocumentsByWord(word int) (map[uuid.UUID]int, map[
 				revertWordIndex[id] += freq
 			}
 		}()
+
 		go func() {
-			wg.Wait()
+			ir.wg.Wait()
 			close(errCh)
 		}()
+		
 		it2 := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it2.Close()
 		for it2.Seek(hprefix); it2.ValidForPrefix(hprefix); it2.Next() {
