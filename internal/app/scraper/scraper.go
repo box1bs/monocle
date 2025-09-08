@@ -25,7 +25,7 @@ var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 var urlRegex = regexp.MustCompile(`^https?://`)
 
 type indexer interface {
-    HandleDocumentWords(*model.Document, string) error
+    HandleDocumentWords(*model.Document, string, string) error
 }
 
 type workerPool interface {
@@ -173,19 +173,25 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 
 	c, cancel = context.WithTimeout(ctx, time.Second * 5)
 	defer cancel()
-	var links []string
-	var content string
-    document.Description, links, content = ws.parseHTMLStream(c, doc, currentURL, parent.GetRules())
+    links, content, header := ws.parseHTMLStream(c, doc, currentURL, parent.GetRules())
 
 	c, cancel = context.WithTimeout(ctx, time.Second * 5)
 	defer cancel()
-	document.Vec, err = ws.vectorize(content, c)
+	document.WordVec, err = ws.vectorize(content, c)
 	if err != nil {
 		ws.write(fmt.Sprintf("error vectorizing page: %s with error %v\n", currentURL, err))
 		return
 	}
 
-    if err := ws.idx.HandleDocumentWords(document, content); err != nil {
+	c, cancel = context.WithTimeout(ctx, time.Second * 5)
+	defer cancel()
+	document.TitleVec, err = ws.vectorize(header, c)
+	if err != nil {
+		ws.write(fmt.Sprintf("error vectorizing title for page: %s with error %v\n", currentURL, err))
+		return
+	}
+
+    if err := ws.idx.HandleDocumentWords(document, header, content); err != nil {
 		ws.write(fmt.Sprintf("error handling words for page: %s with error %v\n", currentURL, err))
 		return
 	}
@@ -226,11 +232,11 @@ func (ws *webScraper) haveSitemap(url string) ([]string, error) {
 	return urls, err
 }
 
-func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL string, rules *parser.RobotsTxt) (description string, links []string, fullText string) {
+func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL string, rules *parser.RobotsTxt) (links []string, general, header string) {
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
-	var metaDesc, ogDesc, firstParagraph string
-	var inParagraph, inScriptOrStyle bool
-	var fullTextBuilder strings.Builder
+	var inScriptOrStyle bool
+	var commonWordsBuilder, titleWordsBuilder strings.Builder
+	var tagStack [][2]byte
 	links = make([]string, 0, ws.cfg.MaxLinksInPage)
 
 	tokenCount := 0
@@ -241,15 +247,8 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL 
 		if tokenCount % checkContextEvery == 0 {
 			select {
 			case <-ctx.Done():
-				fullText = strings.TrimSpace(fullTextBuilder.String())
-				
-				if metaDesc != "" {
-					description = metaDesc
-				} else if ogDesc != "" {
-					description = ogDesc
-				} else {
-					description = strings.TrimSpace(firstParagraph)
-				}
+				header = titleWordsBuilder.String()
+				general = strings.TrimSpace(commonWordsBuilder.String())
 				return
 			default:
 			}
@@ -269,32 +268,9 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL 
 			t := tokenizer.Token()
 			tagName := strings.ToLower(t.Data)
 			switch tagName {
-			case "meta":
-				var isDesc, isOG bool
-				var content string
-				for _, attr := range t.Attr {
-					key := strings.ToLower(attr.Key)
-					val := attr.Val
-					if key == "name" && strings.ToLower(val) == "description" {
-						isDesc = true
-					}
-					if key == "property" && strings.ToLower(val) == "og:description" {
-						isOG = true
-					}
-					if key == "content" {
-						content = attr.Val
-					}
-				}
-				if isDesc && content != "" && metaDesc == "" {
-					metaDesc = content
-				}
-				if isOG && content != "" && ogDesc == "" {
-					ogDesc = content
-				}
-			case "p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6", "li":
-                if firstParagraph == "" && tagName == "p" {
-                    inParagraph = true
-                }
+			case "h1", "h2", "h3", "h4", "h5", "h6":
+				tagStack = append(tagStack, [2]byte{'h', tagName[1]})
+
 			case "a":
 				for _, attr := range t.Attr {
 					if strings.ToLower(attr.Key) == "href" {
@@ -334,40 +310,47 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL 
 						break
 					}
 				}
+
 			case "script", "style":
 				inScriptOrStyle = true
 			}
+
 		case html.EndTagToken:
 			t := tokenizer.Token()
 			tagName := strings.ToLower(t.Data)
-			if tagName == "p" && inParagraph {
-				inParagraph = false
-			} else if tagName == "script" || tagName == "style" {
+			if tagName[0] == 'h' {
+				if len(tagStack) > 0 && tagStack[len(tagStack) - 1][1] == tagName[1] {
+					tagStack = tagStack[:len(tagStack) - 1]
+				}
+			}
+
+			if tagName == "script" || tagName == "style" {
 				inScriptOrStyle = false
 			}
+
 		case html.TextToken:
 			if inScriptOrStyle {
 				continue
 			}
+
+			if len(tagStack) > 0 {
+				text := strings.TrimSpace(string(tokenizer.Text()))
+				if text != "" {
+					titleWordsBuilder.WriteString(text + " ")
+				}
+				continue
+			}
+
 			text := strings.TrimSpace(string(tokenizer.Text()))
 			if text != "" {
-				fullTextBuilder.WriteString(text + " ")
-				if inParagraph && firstParagraph == "" {
-					firstParagraph += text + " "
-				}
+				commonWordsBuilder.WriteString(text + " ")
 			}
+
 		}
 	}
 
-	fullText = strings.TrimSpace(fullTextBuilder.String())
-    
-	if metaDesc != "" {
-		description = metaDesc
-	} else if ogDesc != "" {
-		description = ogDesc
-	} else {
-		description = strings.TrimSpace(firstParagraph)
-	}
+	header = titleWordsBuilder.String()
+	general = strings.TrimSpace(commonWordsBuilder.String())
 	return
 }
 

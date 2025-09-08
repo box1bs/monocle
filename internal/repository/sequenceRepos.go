@@ -8,7 +8,7 @@ import (
 
 func (ir *IndexRepository) TransferToSequence(words ...string) ([]int, error) {
 	var ids []int
-    err := ir.db.View(func(txn *badger.Txn) error {
+    err := ir.DB.View(func(txn *badger.Txn) error {
         for _, word := range words {
             item, err := txn.Get([]byte("word:" + word))
             if err == badger.ErrKeyNotFound {
@@ -37,7 +37,7 @@ func (ir *IndexRepository) TransferToSequence(words ...string) ([]int, error) {
 
 func (ir *IndexRepository) SaveToSequence(words ...string) ([]int, error) {
     sequence := make([]int, 0)
-    err := ir.db.Update(func(txn *badger.Txn) error {
+    err := ir.DB.Update(func(txn *badger.Txn) error {
         for _, word := range words {
             key := []byte(word)
             item, err := txn.Get(key)
@@ -80,7 +80,7 @@ func (ir *IndexRepository) SaveToSequence(words ...string) ([]int, error) {
 
 func (ir *IndexRepository) getLastId() (int, error) {
 	var maxId int
-    err := ir.db.View(func(txn *badger.Txn) error {
+    err := ir.DB.View(func(txn *badger.Txn) error {
         item, err := txn.Get([]byte("max_id"))
         if err == badger.ErrKeyNotFound {
             maxId = 1

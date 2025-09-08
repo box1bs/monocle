@@ -17,8 +17,8 @@ import (
 type repository interface {
 	LoadVisitedUrls(*sync.Map) error
 	SaveVisitedUrls(*sync.Map) error
-	IndexDocument(uuid.UUID, []int) error
-	GetDocumentsByWord(int) (map[uuid.UUID]int, error)
+	IndexDocumentWords(uuid.UUID, []int, []int) error
+	GetDocumentsByWord(int) (map[uuid.UUID]int, map[uuid.UUID]struct{}, error)
 	IndexNGrams(...string) error
 	GetWordsByNGrams(...string) ([]string, error)
 	
@@ -74,11 +74,12 @@ func (idx *indexer) Index(config *configs.ConfigData, global context.Context) {
 	}, wp, idx, global, idx.logger.Write, idx.vectorizer.Vectorize).Run()
 }
 
-func (idx *indexer) HandleDocumentWords(doc *model.Document, text string) error {
+//need fix
+func (idx *indexer) HandleDocumentWords(doc *model.Document, words, header string) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	stemmed, err := idx.stemmer.TokenizeAndStem(text, func(s string) error {
+	stemmed, err := idx.stemmer.TokenizeAndStem(words, func(s string) error {
 		return idx.repository.IndexNGrams(idx.sc.BreakToNGrams(s)...)
 	})
 	if err != nil {
@@ -93,8 +94,23 @@ func (idx *indexer) HandleDocumentWords(doc *model.Document, text string) error 
 		return err
 	}
 
-	idx.repository.IndexDocument(doc.Id, sequence)
 	doc.WordCount = len(sequence)
+	headerSeq := []int{}
+	
+	if header != "" {
+		headerStemmed, err := idx.stemmer.TokenizeAndStem(header, func(s string) error {
+			return idx.repository.IndexNGrams(idx.sc.BreakToNGrams(s)...)
+		})
+		if err != nil {
+			return err
+		}
+		headerSeq, err = idx.repository.SaveToSequence(headerStemmed...)
+		if err != nil {
+			return err
+		}
+		doc.WordCount += len(headerSeq)
+	}
+	idx.repository.IndexDocumentWords(doc.Id, headerSeq, sequence)
 	doc.PartOfFullSize = 512.0 / float64(doc.WordCount)
 	idx.repository.SaveDocument(doc)
 
@@ -169,7 +185,7 @@ func (idx *indexer) GetDocumentsCount() (int, error) {
 	return idx.repository.GetDocumentsCount()
 }
 
-func (idx *indexer) GetDocumentsByWord(word int) (map[uuid.UUID]int, error) {
+func (idx *indexer) GetDocumentsByWord(word int) (map[uuid.UUID]int, map[uuid.UUID]struct{}, error) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	return idx.repository.GetDocumentsByWord(word)

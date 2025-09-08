@@ -16,7 +16,6 @@ import (
 	"github.com/box1bs/Saturday/internal/model"
 	"github.com/box1bs/Saturday/internal/repository"
 	"github.com/box1bs/Saturday/logs/logger"
-	"github.com/dgraph-io/badger/v3"
 )
 
 func main() {
@@ -26,13 +25,11 @@ func main() {
 	)
 	flag.Parse()
 
-	db, err := badger.Open(badger.DefaultOptions("/index/badger"))
+	ir, err := repository.NewIndexRepository("index/badger")
 	if err != nil {
 		panic(err)
 	}
-	defer db.Close()
-
-	ir := repository.NewIndexRepository(db)
+	defer ir.DB.Close()
 
 	cfg, err := configs.UploadLocalConfiguration(*configFile)
 	if err != nil {
@@ -97,7 +94,7 @@ func Present(docs []*model.Document) {
 	
 	fmt.Printf("Found %d results:\n", len(docs))
 	for i, doc := range docs {
-		fmt.Printf("%d. URL: %s\nDescription: %s\n\n", 
-			i+1, doc.URL, doc.Description)
+		fmt.Printf("%d. URL: %s\n\n", 
+			i+1, doc.URL)
 	}
 }

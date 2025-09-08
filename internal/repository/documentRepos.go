@@ -22,10 +22,10 @@ func (ir *IndexRepository) bytesToDocument(body []byte) (*model.Document, error)
 	var payload struct {
 		Id 				string 		`json:"id"`
 		URL 			string 		`json:"url"`
-		Description 	string 		`json:"description"`
 		WordCount 		int 		`json:"words_count"`
 		PartOfFullSize 	float64 	`json:"part_of_full_size"`
-		Vec 			[][]float64 `json:"vec"`
+		Vec1 			[][]float64 `json:"word_vec"`
+		Vec2 			[][]float64 `json:"title_vec"`
 	}
 	err := json.Unmarshal(body, &payload)
 	if err != nil {
@@ -38,10 +38,10 @@ func (ir *IndexRepository) bytesToDocument(body []byte) (*model.Document, error)
 	doc := &model.Document{
 		Id: id,
 		URL: payload.URL,
-		Description: payload.Description,
 		WordCount: payload.WordCount,
 		PartOfFullSize: payload.PartOfFullSize,
-		Vec: payload.Vec,
+		WordVec: payload.Vec1,
+		TitleVec: payload.Vec2,
 	}
 	return doc, err
 }
@@ -56,7 +56,7 @@ func (ir *IndexRepository) SaveDocument(doc *model.Document) error {
 		return err
 	}
 
-	return ir.db.Update(func(txn *badger.Txn) error {
+	return ir.DB.Update(func(txn *badger.Txn) error {
 		docKey := createDocumentKey(doc.Id)
 		if err := txn.Set(docKey, docBytes); err != nil {
 			return err
@@ -67,7 +67,7 @@ func (ir *IndexRepository) SaveDocument(doc *model.Document) error {
 
 func (ir *IndexRepository) GetDocumentByID(docID uuid.UUID) (*model.Document, error) {
 	var docBytes []byte
-	err := ir.db.View(func(txn *badger.Txn) error {
+	err := ir.DB.View(func(txn *badger.Txn) error {
 		docKey := createDocumentKey(docID)
 		item, err := txn.Get(docKey)
 		if err != nil {
@@ -90,7 +90,7 @@ func (ir *IndexRepository) GetDocumentByID(docID uuid.UUID) (*model.Document, er
 func (ir *IndexRepository) GetAllDocuments() ([]*model.Document, error) {
 	var documents []*model.Document
 	
-	err := ir.db.View(func(txn *badger.Txn) error {
+	err := ir.DB.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 10
 		it := txn.NewIterator(opts)
@@ -130,7 +130,7 @@ func (ir *IndexRepository) GetAllDocuments() ([]*model.Document, error) {
 func (ir *IndexRepository) GetDocumentsCount() (int, error) {
 	var count int
 	
-	err := ir.db.View(func(txn *badger.Txn) error {
+	err := ir.DB.View(func(txn *badger.Txn) error {
 		docPrefix := []byte(DocumentKeyPrefix)
 		
 		opts := badger.DefaultIteratorOptions

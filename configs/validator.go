@@ -44,22 +44,22 @@ func (v *validator) Validate(i any) error {
 
 			case "min":
 				if f.Kind() == reflect.Int {
-					curr, err := strconv.ParseInt(entity[1], 10, 64)
+					border, err := strconv.ParseInt(entity[1], 10, 64)
 					if err != nil {
 						return err
 					}
-					if f.Int() < curr {
+					if f.Int() < border {
 						return errors.New("field " + field.Name + " less than min")
 					}
 				}
 
 			case "max":
 				if f.Kind() == reflect.Int {
-					curr, err := strconv.ParseInt(entity[1], 10, 64)
+					border, err := strconv.ParseInt(entity[1], 10, 64)
 					if err != nil {
 						return err
 					}
-					if f.Int() > curr {
+					if f.Int() > border {
 						return errors.New("field " + field.Name + " greater than max")
 					}
 				}

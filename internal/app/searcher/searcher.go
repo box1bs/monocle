@@ -13,7 +13,7 @@ import (
 )
 
 type index interface {
-	GetDocumentsByWord(int) (map[uuid.UUID]int, error)
+	GetDocumentsByWord(int) (map[uuid.UUID]int, map[uuid.UUID]struct{}, error)
 	GetDocumentsCount() (int, error)
 	GetDocumentByID(uuid.UUID) (*model.Document, error)
 	GetAVGLen() (float64, error)
@@ -37,7 +37,8 @@ func NewSearcher(idx index) *Searcher {
 type requestRanking struct {
 	tf_idf 			float64
 	bm25 			float64
-	cos 			float64
+	wordsCos		float64
+	headerCos		float64
 	includesWords 	int
 	//any ranking scores
 }
@@ -54,13 +55,15 @@ func (s *Searcher) Search(query string, quorum float64, maxLen int) []*model.Doc
 		return nil
 	}
 	index := make(map[int]map[uuid.UUID]int)
+	preCaclFuture := make(map[int]map[uuid.UUID]struct{})
 	for i := range terms {
-		mp, err := s.idx.GetDocumentsByWord(terms[i])
+		mp, hasInHeader, err := s.idx.GetDocumentsByWord(terms[i])
 		if err != nil {
 			log.Println(err)
 			return nil
 		}
 		index[terms[i]] = mp
+		preCaclFuture[terms[i]] = hasInHeader
 	}
 
 	result := make([]*model.Document, 0)
@@ -139,11 +142,16 @@ func (s *Searcher) Search(query string, quorum float64, maxLen int) []*model.Doc
 		r := rank[doc.Id]
 
 		if r.tf_idf >= quorum {
-			var sumCos float64
-			for _, v := range doc.Vec{
-				sumCos += calcCosineSimilarity(v, vec[0])
+			var sumCosW float64
+			for _, v := range doc.WordVec{
+				sumCosW += calcCosineSimilarity(v, vec[0])
 			}
-			r.cos = sumCos / float64(len(doc.Vec))
+			var sumCosH float64
+			for _, v := range doc.TitleVec{
+				sumCosH += calcCosineSimilarity(v, vec[0])
+			}
+			r.wordsCos = sumCosW / float64(len(doc.WordVec))
+			r.headerCos = sumCosH / float64(len(doc.TitleVec))
 			rank[doc.Id] = r
 			filteredResult = append(filteredResult, doc)
 		}
@@ -155,8 +163,11 @@ func (s *Searcher) Search(query string, quorum float64, maxLen int) []*model.Doc
 	}
 
 	sort.Slice(filteredResult, func(i, j int) bool {
-		if rank[filteredResult[i].Id].cos != rank[filteredResult[j].Id].cos {
-			return rank[filteredResult[i].Id].cos > rank[filteredResult[j].Id].cos
+		if rank[filteredResult[i].Id].headerCos != rank[filteredResult[j].Id].headerCos {
+			return rank[filteredResult[i].Id].headerCos > rank[filteredResult[j].Id].headerCos
+		}
+		if rank[filteredResult[i].Id].wordsCos != rank[filteredResult[j].Id].wordsCos {
+			return rank[filteredResult[i].Id].wordsCos > rank[filteredResult[j].Id].wordsCos
 		}
 		if rank[filteredResult[i].Id].includesWords != rank[filteredResult[j].Id].includesWords {
 			return rank[filteredResult[i].Id].includesWords > rank[filteredResult[j].Id].includesWords
