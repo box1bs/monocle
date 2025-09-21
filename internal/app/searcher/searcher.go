@@ -208,3 +208,35 @@ func culcBM25(idf float64, tf float64, doc *model.Document, avgLen float64) floa
 	b := 0.75
 	return idf * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * doc.GetFullSize() / avgLen))
 }
+
+func calcDencity(positions [][]int, lenQuery int) int {
+	minDencity := math.MaxInt
+
+	bs := func(cur, target, l, r int) int {
+		for l < r {
+			m := (l + r) / 2
+			if positions[cur][m] <= target {
+				l = m + 1
+			}
+			if positions[cur][m] > target {
+				r = m
+			}
+		}
+		return l
+	}
+
+	for i := range positions[0] {
+		cur := positions[0][i]
+		last := cur
+		for j := range lenQuery {
+			position := bs(i, last, 0, len(positions[j]))
+			if position == len(positions[j]) {
+				return minDencity
+			}
+			last = position
+		}
+		minDencity = min(minDencity, last - cur)
+	}
+
+	return minDencity
+}

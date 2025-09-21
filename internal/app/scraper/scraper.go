@@ -26,6 +26,7 @@ var urlRegex = regexp.MustCompile(`^https?://`)
 
 type indexer interface {
     HandleDocumentWords(*model.Document, string, string) error
+	IsCrawledContent(uuid.UUID, string) (bool, error)
 }
 
 type workerPool interface {
@@ -131,7 +132,7 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 			}
 		}
 		
-		if urls, err = ws.haveSitemap(currentURL); urls == nil || err != nil {
+		if urls, err = ws.haveSitemap(currentURL); err != nil {
 			errCh <- err
 		}
 	}()
@@ -160,6 +161,10 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 	c, cancel = context.WithTimeout(ctx, time.Second * 5)
 	defer cancel()
     links, content, header := ws.parseHTMLStream(c, doc, currentURL, parent.GetRules())
+
+	if crawled, err := ws.idx.IsCrawledContent(document.Id, content); err != nil || crawled { // пока я не сделаю проверку на рекламу и отстальную временную дитч эта хуйня работать не будет
+		return
+	}
 
 	if len(urls) > 0 {
 		links = append(links, urls...)
@@ -233,9 +238,9 @@ func (ws *webScraper) haveSitemap(url string) ([]string, error) {
 
 func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL string, rules *parser.RobotsTxt) (links []string, general, header string) {
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
-	var inScriptOrStyle bool
 	var commonWordsBuilder, titleWordsBuilder strings.Builder
 	var tagStack [][2]byte
+	var garbageTagStack []string
 	links = make([]string, 0, ws.cfg.MaxLinksInPage)
 
 	tokenCount := 0
@@ -264,11 +269,26 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL 
 
 		switch tokenType {
 		case html.StartTagToken:
+			if len(garbageTagStack) > 0 {
+				continue
+			}
+
 			t := tokenizer.Token()
 			tagName := strings.ToLower(t.Data)
 			switch tagName {
 			case "h1", "h2", "h3", "h4", "h5", "h6":
 				tagStack = append(tagStack, [2]byte{'h', tagName[1]})
+
+			case "div":
+				for _, attr := range t.Attr {
+					if attr.Key == "class" || attr.Key == "id" {
+						val := strings.ToLower(attr.Val)
+						if strings.Contains(val, "ad") || strings.Contains(val, "banner") || strings.Contains(val, "promo") {
+							garbageTagStack = append(garbageTagStack, tagName)
+							break
+						}
+					}
+				}
 
 			case "a":
 				for _, attr := range t.Attr {
@@ -310,8 +330,9 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL 
 					}
 				}
 
-			case "script", "style":
-				inScriptOrStyle = true
+			case "script", "style", "iframe", "aside", "nav", "footer":
+				garbageTagStack = append(garbageTagStack, tagName)
+
 			}
 
 		case html.EndTagToken:
@@ -323,12 +344,12 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL 
 				}
 			}
 
-			if tagName == "script" || tagName == "style" {
-				inScriptOrStyle = false
+			if len(garbageTagStack) > 0 && garbageTagStack[len(garbageTagStack) - 1] == tagName {
+				garbageTagStack = garbageTagStack[:len(garbageTagStack) - 1]
 			}
 
 		case html.TextToken:
-			if inScriptOrStyle {
+			if len(garbageTagStack) > 0 {
 				continue
 			}
 

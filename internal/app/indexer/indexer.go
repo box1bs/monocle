@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"sync"
 
@@ -26,6 +27,8 @@ type repository interface {
 	GetDocumentByID(uuid.UUID) (*model.Document, error)
 	GetAllDocuments() ([]*model.Document, error)
 	GetDocumentsCount() (int, error)
+
+	CheckContent(uuid.UUID, [32]byte) (bool, *model.Document, error)
 	
 	TransferToSequence(...string) ([]int, error)
 	SaveToSequence(...string) ([]int, error)
@@ -42,20 +45,18 @@ type vectorizer interface {
 type indexer struct {
 	stemmer 	*textHandling.EnglishStemmer
 	sc 			*spellChecker.SpellChecker
-	mu 	  		*sync.RWMutex
 	repository 	repository
 	vectorizer 	vectorizer
 	logger 		logger
 }
 
-func NewIndexer(repo repository, vec vectorizer, logger logger, nGramCount, maxTypo int) *indexer {
+func NewIndexer(repo repository, vec vectorizer, logger logger, maxTypo, nGramCount int) *indexer {
 	return &indexer{
-		mu:        	&sync.RWMutex{},
+		stemmer:   	textHandling.NewEnglishStemmer(),
+		sc:        	spellChecker.NewSpellChecker(maxTypo, nGramCount),
 		repository: repo,
 		vectorizer: vec,
 		logger:    	logger,
-		stemmer:   	textHandling.NewEnglishStemmer(),
-		sc:        	spellChecker.NewSpellChecker(maxTypo, nGramCount),
 	}
 }
 
@@ -74,11 +75,7 @@ func (idx *indexer) Index(config *configs.ConfigData, global context.Context) {
 	}, wp, idx, global, idx.logger.Write, idx.vectorizer.Vectorize).Run()
 }
 
-//need fix
 func (idx *indexer) HandleDocumentWords(doc *model.Document, words, header string) error {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
 	stemmed, err := idx.stemmer.TokenizeAndStem(words, func(s string) error {
 		return idx.repository.IndexNGrams(idx.sc.BreakToNGrams(s)...)
 	})
@@ -111,16 +108,13 @@ func (idx *indexer) HandleDocumentWords(doc *model.Document, words, header strin
 		doc.WordCount += len(headerSeq)
 	}
 	idx.repository.IndexDocumentWords(doc.Id, headerSeq, sequence)
-	doc.PartOfFullSize = 512.0 / float64(doc.WordCount)
+	doc.PartOfFullSize = 256.0 / float64(doc.WordCount)
 	idx.repository.SaveDocument(doc)
 
 	return nil
 }
 
 func (idx *indexer) HandleTextQuery(text string) ([]int, error) {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-
 	stemmed, err := idx.stemmer.TokenizeAndStem(text, nil)
 	if err != nil {
 		return nil, err
@@ -152,9 +146,6 @@ func (idx *indexer) HandleTextQuery(text string) ([]int, error) {
 }
 
 func (idx *indexer) GetAVGLen() (float64, error) {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-
 	var wordCount int
 	docs, err := idx.repository.GetAllDocuments()
 	if err != nil {
@@ -167,26 +158,32 @@ func (idx *indexer) GetAVGLen() (float64, error) {
 	return float64(wordCount) / float64(len(docs)), nil
 }
 
-func (idx *indexer) GetWordsByNGrams(word string) ([]string, error) {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-	return idx.repository.GetWordsByNGrams(idx.sc.BreakToNGrams(word)...)
+func (idx *indexer) IsCrawledContent(id uuid.UUID, content string) (bool, error) {
+	hash := sha256.Sum256([]byte(content))
+
+	crawled, doc, err := idx.repository.CheckContent(id, hash)
+	if err != nil || doc == nil {
+		return false, err
+	}
+
+	if crawled {
+		doc.Id = id
+		if err = idx.repository.SaveDocument(doc); err != nil {
+			return true, err
+		}
+	}
+
+	return crawled, err
 }
 
 func (idx *indexer) GetDocumentByID(id uuid.UUID) (*model.Document, error) {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
 	return idx.repository.GetDocumentByID(id)
 }
 
 func (idx *indexer) GetDocumentsCount() (int, error) {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
 	return idx.repository.GetDocumentsCount()
 }
 
 func (idx *indexer) GetDocumentsByWord(word int) (map[uuid.UUID]int, map[uuid.UUID]struct{}, error) {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
 	return idx.repository.GetDocumentsByWord(word)
 }

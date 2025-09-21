@@ -1,47 +1,42 @@
 import torch
 from flask import Flask, request, jsonify
-from transformers import BertConfig, BertModel, BertTokenizer
+from sentence_transformers import SentenceTransformer
 
 app = Flask(__name__)
 
-config = BertConfig.from_json_file('model/config.json')
-model = BertModel.from_pretrained('model', config=config)
-tokenizer = BertTokenizer.from_pretrained('model/vocab.txt', do_lower_case=True)
+all_mini_lm_path = 'all-MiniLM-L6-v2'
+
+try:
+    model = SentenceTransformer(all_mini_lm_path)
+    print(f"Модель успешно загружена с '{all_mini_lm_path}' на устройство ")
+except Exception as e:
+    print(f"ОШИБКА: Не удалось загрузить модель. Проверьте путь '{all_mini_lm_path}'. Ошибка: {e}")
 
 class Document:
-    text: str
     def __init__(self, text: str):
         self.text = text
 
-def get_sentence_embeddings(content: str, max_length=512) -> list[list[float]]:
-    enc = tokenizer(
-        content,
-        return_tensors="pt",
-        max_length=max_length,
-        truncation=True,
-        return_overflowing_tokens=True,
-        stride=50,
-    )
-    input_ids = enc["input_ids"]
-    attention_mask = enc["attention_mask"]
-    token_type_ids = enc.get("token_type_ids")
+def chunk_text(text: str, chunk_size: int, stride: int) -> list[str]:
+    tokenizer = model.tokenizer
+    
+    tokens = tokenizer.encode(text)
+    
+    if len(tokens) <= chunk_size:
+        return [text]
+        
+    chunks = []
+    for i in range(0, len(tokens), chunk_size - stride):
+        chunk_tokens = tokens[i : i + chunk_size]
+        chunks.append(tokenizer.decode(chunk_tokens, skip_special_tokens=True))
+        
+    return chunks
 
-    with torch.no_grad():
-        if token_type_ids is not None:
-            outputs = model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                token_type_ids=token_type_ids,
-            )
-        else:
-            outputs = model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-            )
-        cls_embeddings = outputs.last_hidden_state[:, 0, :].cpu().numpy()
-
-    return cls_embeddings.tolist()
-
+def get_sentence_embeddings(content: str, max_length=512, stride=50) -> list[list[float]]:
+    text_chunks = chunk_text(content, chunk_size=max_length, stride=stride)
+    
+    embeddings = model.encode(text_chunks, convert_to_numpy=True, show_progress_bar=False)
+    
+    return embeddings.tolist()
 
 @app.route('/vectorize', methods=['POST'])
 def get_embeddings():

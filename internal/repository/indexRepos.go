@@ -63,8 +63,13 @@ func (ir *IndexRepository) IndexDocumentWords(docID uuid.UUID, words, titleWords
 	go func() {
 		defer ir.wg.Done()
 		wordFreq := make(map[int]int)
-		for _, word := range words {
+		mp := map[int][]int{}
+		for i, word := range words {
 			wordFreq[word]++
+			if mp[word] == nil {
+				mp[word] = make([]int, 0)
+			}
+			mp[word] = append(mp[word], i) // сделать функцию сохранения
 		}
 		if err := ir.DB.Update(func(txn *badger.Txn) error {
 			for word, freq := range wordFreq {

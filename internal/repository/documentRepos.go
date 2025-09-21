@@ -2,11 +2,14 @@ package repository
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+
+	"slices"
 
 	"github.com/box1bs/Saturday/internal/model"
 	"github.com/dgraph-io/badger/v3"
 	"github.com/google/uuid"
-	"slices"
 )
 
 const (
@@ -150,4 +153,46 @@ func (ir *IndexRepository) GetDocumentsCount() (int, error) {
 	}
 	
 	return count, nil
+}
+
+func (ir *IndexRepository) CheckContent(id uuid.UUID, hash [32]byte) (bool, *model.Document, error) {
+	key := []byte(fmt.Sprintf("%s_%s", hash, id.String()))
+	var (
+		err error
+		doc *model.Document
+	)
+	existError := "content already exists"
+
+	err = ir.DB.Update(func(txn *badger.Txn) error {
+		pref := []byte(fmt.Sprintf("%s_", hash))
+
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		if it.Seek(pref); it.ValidForPrefix(pref){
+			item := it.Item()
+			k := item.Key()
+			doc, err = ir.GetDocumentByID(uuid.MustParse(string(k[33:])))
+			if err != nil {
+				return err
+			}
+
+			return errors.New(existError)
+		}
+
+		if err := txn.Set(key, []byte{}); err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		if err.Error() == existError {
+			return true, doc, nil
+		}
+	}
+	return false, nil, err
 }

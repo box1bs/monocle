@@ -60,7 +60,7 @@ func main() {
 		os.Exit(0)
 	}()
 	
-	i := indexer.NewIndexer(ir, nil, logger, 3, 2)
+	i := indexer.NewIndexer(ir, nil, logger, 2, 3)
 	i.Index(cfg, ctx)
 
 	count, err := i.GetDocumentsCount()

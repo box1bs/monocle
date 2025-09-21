@@ -149,14 +149,14 @@ func (s *EnglishStemmer) TokenizeAndStem(text string, index func(string) error) 
 
 	stemmedTokens := []string{}
 	for _, token := range tokens {
-		if token.Type == WORD || token.Type == ALPHANUMERIC {
+		if token.Type == WORD {
 			if index != nil {
 				if err := index(token.Value); err != nil {
 					return nil, err
 				}
 			}
 			stemmedTokens = append(stemmedTokens, s.stem(token.Value))
-		} else if token.Type != WHITESPACE {
+		} else if token.Type == ALPHANUMERIC {
 			stemmedTokens = append(stemmedTokens, token.Value)
 		}
 	}
