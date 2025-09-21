@@ -3,6 +3,7 @@ package indexer
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -18,8 +19,8 @@ import (
 type repository interface {
 	LoadVisitedUrls(*sync.Map) error
 	SaveVisitedUrls(*sync.Map) error
-	IndexDocumentWords(uuid.UUID, []int, []int) error
-	GetDocumentsByWord(int) (map[uuid.UUID]int, map[uuid.UUID]struct{}, error)
+	IndexDocumentWords(uuid.UUID, []int, map[string][]model.Position) <- chan error
+	GetDocumentsByWord(int) (map[uuid.UUID]*model.WordCountAndPositions, error)
 	IndexNGrams(...string) error
 	GetWordsByNGrams(...string) ([]string, error)
 	
@@ -75,47 +76,39 @@ func (idx *indexer) Index(config *configs.ConfigData, global context.Context) {
 	}, wp, idx, global, idx.logger.Write, idx.vectorizer.Vectorize).Run()
 }
 
-func (idx *indexer) HandleDocumentWords(doc *model.Document, words, header string) error {
-	stemmed, err := idx.stemmer.TokenizeAndStem(words, func(s string) error {
-		return idx.repository.IndexNGrams(idx.sc.BreakToNGrams(s)...)
-	})
-	if err != nil {
-		return err
-	}
-	if len(stemmed) == 0 {
-		return fmt.Errorf("no valid words found")
-	}
-	
-	sequence, err := idx.repository.SaveToSequence(stemmed...)
-	if err != nil {
-		return err
-	}
+func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Passage) error {
+	var i = 0
+	var sequence []int
+	positions := map[string][]model.Position{}
+	for _, passage := range passages {
+		stemmed, err := idx.stemmer.TokenizeAndStem(passage.Text)
+		if err != nil {
+			return err
+		}
+		if len(stemmed) == 0 {
+			return fmt.Errorf("no valid words found")
+		}
 
-	doc.WordCount = len(sequence)
-	headerSeq := []int{}
-	
-	if header != "" {
-		headerStemmed, err := idx.stemmer.TokenizeAndStem(header, func(s string) error {
-			return idx.repository.IndexNGrams(idx.sc.BreakToNGrams(s)...)
-		})
+		s, err := idx.repository.SaveToSequence(stemmed...)
 		if err != nil {
 			return err
 		}
-		headerSeq, err = idx.repository.SaveToSequence(headerStemmed...)
-		if err != nil {
-			return err
+		sequence = append(sequence, s...)
+
+		doc.WordCount += len(s)
+		for _, word := range stemmed {
+			positions[word] = append(positions[word], model.NewTypeTextObj[model.Position](passage.Type, "", i))
+			i++
 		}
-		doc.WordCount += len(headerSeq)
 	}
-	idx.repository.IndexDocumentWords(doc.Id, headerSeq, sequence)
-	doc.PartOfFullSize = 256.0 / float64(doc.WordCount)
+	ch := idx.repository.IndexDocumentWords(doc.Id, sequence, positions)
 	idx.repository.SaveDocument(doc)
 
-	return nil
+	return <- ch
 }
 
 func (idx *indexer) HandleTextQuery(text string) ([]int, error) {
-	stemmed, err := idx.stemmer.TokenizeAndStem(text, nil)
+	stemmed, err := idx.stemmer.TokenizeAndStem(text)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +124,7 @@ func (idx *indexer) HandleTextQuery(text string) ([]int, error) {
 			if err != nil || len(condidates) == 0 {
 				continue
 			}
-			stemmedReplacement, err := idx.stemmer.TokenizeAndStem(idx.sc.BestReplacement(stemmed[i], condidates), nil)
+			stemmedReplacement, err := idx.stemmer.TokenizeAndStem(idx.sc.BestReplacement(stemmed[i], condidates))
 			if err != nil || len(stemmedReplacement) == 0 {
 				continue
 			}
@@ -151,15 +144,20 @@ func (idx *indexer) GetAVGLen() (float64, error) {
 	if err != nil {
 		return 0, err
 	}
+
 	for _, doc := range docs {
-		wordCount += int(doc.GetFullSize())
+		wordCount += int(doc.WordCount)
 	}
 
 	return float64(wordCount) / float64(len(docs)), nil
 }
 
-func (idx *indexer) IsCrawledContent(id uuid.UUID, content string) (bool, error) {
-	hash := sha256.Sum256([]byte(content))
+func (idx *indexer) IsCrawledContent(id uuid.UUID, content []model.Passage) (bool, error) {
+	c, err := json.Marshal(content)
+	if err != nil {
+		return false, err
+	}
+	hash := sha256.Sum256(c)
 
 	crawled, doc, err := idx.repository.CheckContent(id, hash)
 	if err != nil || doc == nil {
@@ -184,6 +182,6 @@ func (idx *indexer) GetDocumentsCount() (int, error) {
 	return idx.repository.GetDocumentsCount()
 }
 
-func (idx *indexer) GetDocumentsByWord(word int) (map[uuid.UUID]int, map[uuid.UUID]struct{}, error) {
+func (idx *indexer) GetDocumentsByWord(word int) (map[uuid.UUID]*model.WordCountAndPositions, error) {
 	return idx.repository.GetDocumentsByWord(word)
 }

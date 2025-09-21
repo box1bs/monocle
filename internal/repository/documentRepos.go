@@ -14,7 +14,7 @@ import (
 
 const (
     DocumentKeyPrefix = "doc:"
-    WordDocumentKeyFormat = "%d_%s"
+    WordDocumentKeyFormat = "%d_%s_%d"
 )
 
 func (ir *IndexRepository) documentToBytes(doc *model.Document) ([]byte, error) {
@@ -26,9 +26,7 @@ func (ir *IndexRepository) bytesToDocument(body []byte) (*model.Document, error)
 		Id 				string 		`json:"id"`
 		URL 			string 		`json:"url"`
 		WordCount 		int 		`json:"words_count"`
-		PartOfFullSize 	float64 	`json:"part_of_full_size"`
-		Vec1 			[][]float64 `json:"word_vec"`
-		Vec2 			[][]float64 `json:"title_vec"`
+		Vec				[][]float64 `json:"word_vec"`
 	}
 	err := json.Unmarshal(body, &payload)
 	if err != nil {
@@ -42,9 +40,7 @@ func (ir *IndexRepository) bytesToDocument(body []byte) (*model.Document, error)
 		Id: id,
 		URL: payload.URL,
 		WordCount: payload.WordCount,
-		PartOfFullSize: payload.PartOfFullSize,
-		WordVec: payload.Vec1,
-		TitleVec: payload.Vec2,
+		WordVec: payload.Vec,
 	}
 	return doc, err
 }

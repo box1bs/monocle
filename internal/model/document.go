@@ -6,11 +6,47 @@ type Document struct {
 	Id 				uuid.UUID	`json:"id"`
 	URL				string		`json:"url"`
 	WordCount 		int			`json:"words_count"`
-	PartOfFullSize	float64		`json:"part_of_full_size"`
 	WordVec 		[][]float64	`json:"word_vec"`
-	TitleVec 		[][]float64	`json:"title_vec"`
 }
 
-func (d *Document) GetFullSize() float64 {
-	return float64(256.0 / d.PartOfFullSize)
+const (
+	bodyType = 'b'
+	headerType = 'h'
+	queryType = 'q'
+)
+
+type Passage struct {
+	Text string
+	Type byte
+}
+
+type WordCountAndPositions struct {
+	Count 		int
+	Positions 	[]Position
+}
+
+type Position struct {
+	I 		int
+	Type 	byte
+}
+
+func NewTypeTextObj[T Passage | Position](t byte, text string, i int) T {
+	switch t {
+	case bodyType, headerType, queryType:
+
+	default:
+		panic("unnamed passage type")
+
+	}
+
+	switch any(*new(T)).(type) {
+	case Passage:
+		out := Passage{Text: text, Type: t}
+		return any(out).(T)
+	case Position:
+		out := Position{I: i, Type: t}
+		return any(out).(T)
+	default:
+		panic("unnamed passage type")
+	}
 }

@@ -25,8 +25,8 @@ var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 var urlRegex = regexp.MustCompile(`^https?://`)
 
 type indexer interface {
-    HandleDocumentWords(*model.Document, string, string) error
-	IsCrawledContent(uuid.UUID, string) (bool, error)
+    HandleDocumentWords(*model.Document, []model.Passage) error
+	IsCrawledContent(uuid.UUID, []model.Passage) (bool, error)
 }
 
 type workerPool interface {
@@ -160,9 +160,9 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 
 	c, cancel = context.WithTimeout(ctx, time.Second * 5)
 	defer cancel()
-    links, content, header := ws.parseHTMLStream(c, doc, currentURL, parent.GetRules())
+    links, passages := ws.parseHTMLStream(c, doc, currentURL, parent.GetRules())
 
-	if crawled, err := ws.idx.IsCrawledContent(document.Id, content); err != nil || crawled { // пока я не сделаю проверку на рекламу и отстальную временную дитч эта хуйня работать не будет
+	if crawled, err := ws.idx.IsCrawledContent(document.Id, passages); err != nil || crawled {
 		return
 	}
 
@@ -172,27 +172,18 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 
 	c, cancel = context.WithTimeout(ctx, time.Second * 5)
 	defer cancel()
-
-	wg := new(sync.WaitGroup)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		document.WordVec, err = ws.vectorize(content, c)
-		if err != nil {
-			ws.write(fmt.Sprintf("error vectorizing page: %s with error %v\n", currentURL, err))
-			return
-		}
-	}()
-
-	document.TitleVec, err = ws.vectorize(header, c)
+	
+	fullText := strings.Builder{}
+	for _, passage := range passages {
+		fullText.WriteString(passage.Text)
+	}
+	document.WordVec, err = ws.vectorize(fullText.String(), c)
 	if err != nil {
-		ws.write(fmt.Sprintf("error vectorizing title for page: %s with error %v\n", currentURL, err))
+		ws.write(fmt.Sprintf("error vectorizing page: %s with error %v\n", currentURL, err))
 		return
 	}
 
-	wg.Wait()
-
-    if err := ws.idx.HandleDocumentWords(document, header, content); err != nil {
+    if err := ws.idx.HandleDocumentWords(document, passages); err != nil {
 		ws.write(fmt.Sprintf("error handling words for page: %s with error %v\n", currentURL, err))
 		return
 	}
@@ -236,9 +227,8 @@ func (ws *webScraper) haveSitemap(url string) ([]string, error) {
 	return urls, err
 }
 
-func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL string, rules *parser.RobotsTxt) (links []string, general, header string) {
+func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL string, rules *parser.RobotsTxt) (links []string, pasages []model.Passage) {
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
-	var commonWordsBuilder, titleWordsBuilder strings.Builder
 	var tagStack [][2]byte
 	var garbageTagStack []string
 	links = make([]string, 0, ws.cfg.MaxLinksInPage)
@@ -251,8 +241,6 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL 
 		if tokenCount % checkContextEvery == 0 {
 			select {
 			case <-ctx.Done():
-				header = titleWordsBuilder.String()
-				general = strings.TrimSpace(commonWordsBuilder.String())
 				return
 			default:
 			}
@@ -276,7 +264,7 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL 
 			t := tokenizer.Token()
 			tagName := strings.ToLower(t.Data)
 			switch tagName {
-			case "h1", "h2", "h3", "h4", "h5", "h6":
+			case "h1", "h2":
 				tagStack = append(tagStack, [2]byte{'h', tagName[1]})
 
 			case "div":
@@ -356,21 +344,18 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL 
 			if len(tagStack) > 0 {
 				text := strings.TrimSpace(string(tokenizer.Text()))
 				if text != "" {
-					titleWordsBuilder.WriteString(text + " ")
+					pasages = append(pasages, model.NewTypeTextObj[model.Passage]('h', text, 0))
 				}
 				continue
 			}
 
 			text := strings.TrimSpace(string(tokenizer.Text()))
 			if text != "" {
-				commonWordsBuilder.WriteString(text + " ")
+				pasages = append(pasages, model.NewTypeTextObj[model.Passage]('b', text, 0))
 			}
 
 		}
 	}
-
-	header = titleWordsBuilder.String()
-	general = strings.TrimSpace(commonWordsBuilder.String())
 	return
 }
 

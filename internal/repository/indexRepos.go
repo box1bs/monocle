@@ -1,15 +1,18 @@
 package repository
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"sync"
 
 	"fmt"
 
+	"slices"
+
+	"github.com/box1bs/Saturday/internal/model"
 	"github.com/dgraph-io/badger/v3"
 	"github.com/google/uuid"
-	"slices"
 )
 
 type IndexRepository struct {
@@ -57,24 +60,24 @@ func (ir *IndexRepository) SaveVisitedUrls(visitedURLs *sync.Map) error {
 	return nil
 }
 
-func (ir *IndexRepository) IndexDocumentWords(docID uuid.UUID, words, titleWords []int) error {
+func (ir *IndexRepository) IndexDocumentWords(docID uuid.UUID, sequence []int, positions map[string][]model.Position) <- chan error {
 	errCh := make(chan error)
 	ir.wg.Add(1)
 	go func() {
 		defer ir.wg.Done()
 		wordFreq := make(map[int]int)
-		mp := map[int][]int{}
-		for i, word := range words {
+		for _, word := range sequence {
 			wordFreq[word]++
-			if mp[word] == nil {
-				mp[word] = make([]int, 0)
-			}
-			mp[word] = append(mp[word], i) // сделать функцию сохранения
+		}
+		encoded, err := json.Marshal(positions)
+		if err != nil {
+			errCh <- err
+			return
 		}
 		if err := ir.DB.Update(func(txn *badger.Txn) error {
 			for word, freq := range wordFreq {
-				key := fmt.Appendf(nil, WordDocumentKeyFormat, word, docID.String())
-				if err := txn.Set(key, []byte(strconv.Itoa(freq))); err != nil {
+				key := fmt.Appendf(nil, WordDocumentKeyFormat, word, docID.String(), freq)
+				if err := txn.Set(key, encoded); err != nil {
 					return err
 				}
 			}
@@ -89,31 +92,13 @@ func (ir *IndexRepository) IndexDocumentWords(docID uuid.UUID, words, titleWords
 		close(errCh)
 	}()
 
-	headerFreq := make(map[int]int)
-	for _, word := range titleWords {
-		headerFreq[word]++
-	}
-	if err := ir.DB.Update(func(txn *badger.Txn) error {
-		for word, freq := range headerFreq {
-			key := fmt.Appendf(nil, "%d:%s", word, docID.String())
-			if err := txn.Set(key, []byte(strconv.Itoa(freq))); err != nil {
-				return err
-			}
-		}
-		return nil
-    }); err != nil {
-		return err
-	}
-
-    return <-errCh
+    return errCh
 }
 
-func (ir *IndexRepository) GetDocumentsByWord(word int) (map[uuid.UUID]int, map[uuid.UUID]struct{}, error) {
-	revertWordIndex := make(map[uuid.UUID]int)
-	hasWordInHeader := make(map[uuid.UUID]struct{})
+func (ir *IndexRepository) GetDocumentsByWord(word int) (map[uuid.UUID]*model.WordCountAndPositions, error) {
+	revertWordIndex := make(map[uuid.UUID]*model.WordCountAndPositions)
 	wprefix := fmt.Appendf(nil, "%d_", word)
-	hprefix := fmt.Appendf(nil, "%d:", word)
-	return revertWordIndex, hasWordInHeader, ir.DB.View(func(txn *badger.Txn) error {
+	return revertWordIndex, ir.DB.View(func(txn *badger.Txn) error {
 		it1 := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it1.Close()
 		errCh := make(chan error)
@@ -123,8 +108,9 @@ func (ir *IndexRepository) GetDocumentsByWord(word int) (map[uuid.UUID]int, map[
 			for it1.Seek(wprefix); it1.ValidForPrefix(wprefix); it1.Next() {
 				item := it1.Item()
 				key := string(item.Key())
-				docID := strings.TrimPrefix(key, string(wprefix))
-				id, err := uuid.Parse(docID)
+				keyPart := strings.TrimPrefix(key, string(wprefix))
+				splited := strings.SplitN(keyPart, "_", 2)
+				id, err := uuid.Parse(splited[0])
 				if err != nil {
 					errCh <- err
 					return
@@ -134,8 +120,13 @@ func (ir *IndexRepository) GetDocumentsByWord(word int) (map[uuid.UUID]int, map[
 					errCh <- err
 					return
 				}
-				freq, _ := strconv.Atoi(string(val))
-				revertWordIndex[id] += freq
+				positions := []model.Position{}
+				if err := json.Unmarshal(val, &positions); err != nil {
+					errCh <- err
+					return
+				}
+				freq, _ := strconv.Atoi(string(splited[1]))
+				revertWordIndex[id] = &model.WordCountAndPositions{Count: freq, Positions: positions}
 			}
 		}()
 
@@ -144,24 +135,6 @@ func (ir *IndexRepository) GetDocumentsByWord(word int) (map[uuid.UUID]int, map[
 			close(errCh)
 		}()
 		
-		it2 := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer it2.Close()
-		for it2.Seek(hprefix); it2.ValidForPrefix(hprefix); it2.Next() {
-			item := it2.Item()
-			key := string(item.Key())
-			docID := strings.TrimPrefix(key, string(hprefix))
-			id, err := uuid.Parse(docID)
-			if err != nil {
-				return err
-			}
-			val, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-			freq, _ := strconv.Atoi(string(val))
-			revertWordIndex[id] += freq
-			hasWordInHeader[id] = struct{}{}
-		}
 		return <-errCh
 	})
 }
