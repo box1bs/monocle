@@ -9,7 +9,6 @@ import (
 
 	"github.com/box1bs/Saturday/internal/model"
 	"github.com/dgraph-io/badger/v3"
-	"github.com/google/uuid"
 )
 
 const (
@@ -23,7 +22,7 @@ func (ir *IndexRepository) documentToBytes(doc *model.Document) ([]byte, error) 
 
 func (ir *IndexRepository) bytesToDocument(body []byte) (*model.Document, error) {
 	var payload struct {
-		Id 				string 		`json:"id"`
+		Id 				[]byte 		`json:"id"`
 		URL 			string 		`json:"url"`
 		WordCount 		int 		`json:"words_count"`
 		Vec				[][]float64 `json:"word_vec"`
@@ -32,21 +31,17 @@ func (ir *IndexRepository) bytesToDocument(body []byte) (*model.Document, error)
 	if err != nil {
 		return nil, err
 	}
-	id, err := uuid.Parse(payload.Id)
-	if err != nil {
-		return nil, err
+	b := [32]byte{}
+	for i := range 32 {
+		b[i] = payload.Id[i]
 	}
 	doc := &model.Document{
-		Id: id,
+		Id: b,
 		URL: payload.URL,
 		WordCount: payload.WordCount,
 		WordVec: payload.Vec,
 	}
 	return doc, err
-}
-
-func createDocumentKey(docID uuid.UUID) []byte {
-	return []byte(DocumentKeyPrefix + docID.String())
 }
 
 func (ir *IndexRepository) SaveDocument(doc *model.Document) error {
@@ -56,19 +51,17 @@ func (ir *IndexRepository) SaveDocument(doc *model.Document) error {
 	}
 
 	return ir.DB.Update(func(txn *badger.Txn) error {
-		docKey := createDocumentKey(doc.Id)
-		if err := txn.Set(docKey, docBytes); err != nil {
+		if err := txn.Set([]byte("doc:" + string(doc.Id[:])), docBytes); err != nil {
 			return err
 		}
 		return nil
 	})
 }
 
-func (ir *IndexRepository) GetDocumentByID(docID uuid.UUID) (*model.Document, error) {
+func (ir *IndexRepository) GetDocumentByID(docID [32]byte) (*model.Document, error) {
 	var docBytes []byte
 	err := ir.DB.View(func(txn *badger.Txn) error {
-		docKey := createDocumentKey(docID)
-		item, err := txn.Get(docKey)
+		item, err := txn.Get([]byte("doc:" + string(docID[:])))
 		if err != nil {
 			return err
 		}
@@ -151,8 +144,8 @@ func (ir *IndexRepository) GetDocumentsCount() (int, error) {
 	return count, nil
 }
 
-func (ir *IndexRepository) CheckContent(id uuid.UUID, hash [32]byte) (bool, *model.Document, error) {
-	key := []byte(fmt.Sprintf("%s_%s", hash, id.String()))
+func (ir *IndexRepository) CheckContent(id [32]byte, hash [32]byte) (bool, *model.Document, error) {
+	key := []byte(fmt.Sprintf("%s_%s", hash, id))
 	var (
 		err error
 		doc *model.Document
@@ -170,7 +163,7 @@ func (ir *IndexRepository) CheckContent(id uuid.UUID, hash [32]byte) (bool, *mod
 		if it.Seek(pref); it.ValidForPrefix(pref){
 			item := it.Item()
 			k := item.Key()
-			doc, err = ir.GetDocumentByID(uuid.MustParse(string(k[33:])))
+			doc, err = ir.GetDocumentByID([32]byte(k[33:]))
 			if err != nil {
 				return err
 			}

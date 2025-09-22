@@ -9,13 +9,12 @@ import (
 	"time"
 
 	"github.com/box1bs/Saturday/internal/model"
-	"github.com/google/uuid"
 )
 
 type index interface {
-	GetDocumentsByWord(int) (map[uuid.UUID]*model.WordCountAndPositions, error)
+	GetDocumentsByWord(int) (map[[32]byte]*model.WordCountAndPositions, error)
 	GetDocumentsCount() (int, error)
-	GetDocumentByID(uuid.UUID) (*model.Document, error)
+	GetDocumentByID([32]byte) (*model.Document, error)
 	GetAVGLen() (float64, error)
 	HandleTextQuery(string) ([]int, error)
 }
@@ -50,14 +49,14 @@ func (s *Searcher) Search(query string, quorum float64, maxLen int) []*model.Doc
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	
-	rank := make(map[uuid.UUID]requestRanking)
+	rank := make(map[[32]byte]requestRanking)
 
 	terms, err := s.idx.HandleTextQuery(query)
 	if err != nil {
 		log.Println(err)
 		return nil
 	}
-	index := make(map[int]map[uuid.UUID]*model.WordCountAndPositions)
+	index := make(map[int]map[[32]byte]*model.WordCountAndPositions)
 	for i := range terms {
 		mp, err := s.idx.GetDocumentsByWord(terms[i])
 		if err != nil {
@@ -68,7 +67,7 @@ func (s *Searcher) Search(query string, quorum float64, maxLen int) []*model.Doc
 	}
 
 	result := make([]*model.Document, 0)
-	alreadyIncluded := make(map[string]struct{})
+	alreadyIncluded := make(map[[32]byte]struct{})
 	var wg sync.WaitGroup
 	var rankMu sync.Mutex
 	var resultMu sync.Mutex
@@ -130,11 +129,11 @@ func (s *Searcher) Search(query string, quorum float64, maxLen int) []*model.Doc
 				rankMu.Unlock()
 	
 				resultMu.Lock()
-				if _, exists := alreadyIncluded[doc.Id.String()]; exists {
+				if _, exists := alreadyIncluded[doc.Id]; exists {
 					resultMu.Unlock()
 					continue
 				}
-				alreadyIncluded[doc.Id.String()] = struct{}{}
+				alreadyIncluded[doc.Id] = struct{}{}
 				result = append(result, doc)
 				resultMu.Unlock()
 			}

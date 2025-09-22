@@ -13,23 +13,22 @@ import (
 	"github.com/box1bs/Saturday/internal/app/scraper"
 	"github.com/box1bs/Saturday/internal/model"
 	"github.com/box1bs/Saturday/pkg/workerPool"
-	"github.com/google/uuid"
 )
 
 type repository interface {
 	LoadVisitedUrls(*sync.Map) error
 	SaveVisitedUrls(*sync.Map) error
-	IndexDocumentWords(uuid.UUID, []int, map[string][]model.Position) <- chan error
-	GetDocumentsByWord(int) (map[uuid.UUID]*model.WordCountAndPositions, error)
+	IndexDocumentWords([32]byte, []int, map[string][]model.Position) <- chan error
+	GetDocumentsByWord(int) (map[[32]byte]*model.WordCountAndPositions, error)
 	IndexNGrams(...string) error
 	GetWordsByNGrams(...string) ([]string, error)
 	
 	SaveDocument(doc *model.Document) error
-	GetDocumentByID(uuid.UUID) (*model.Document, error)
+	GetDocumentByID([32]byte) (*model.Document, error)
 	GetAllDocuments() ([]*model.Document, error)
 	GetDocumentsCount() (int, error)
 
-	CheckContent(uuid.UUID, [32]byte) (bool, *model.Document, error)
+	CheckContent([32]byte, [32]byte) (bool, *model.Document, error)
 	
 	TransferToSequence(...string) ([]int, error)
 	SaveToSequence(...string) ([]int, error)
@@ -152,7 +151,7 @@ func (idx *indexer) GetAVGLen() (float64, error) {
 	return float64(wordCount) / float64(len(docs)), nil
 }
 
-func (idx *indexer) IsCrawledContent(id uuid.UUID, content []model.Passage) (bool, error) {
+func (idx *indexer) IsCrawledContent(id [32]byte, content []model.Passage) (bool, error) {
 	c, err := json.Marshal(content)
 	if err != nil {
 		return false, err
@@ -174,7 +173,7 @@ func (idx *indexer) IsCrawledContent(id uuid.UUID, content []model.Passage) (boo
 	return crawled, err
 }
 
-func (idx *indexer) GetDocumentByID(id uuid.UUID) (*model.Document, error) {
+func (idx *indexer) GetDocumentByID(id [32]byte) (*model.Document, error) {
 	return idx.repository.GetDocumentByID(id)
 }
 
@@ -182,6 +181,6 @@ func (idx *indexer) GetDocumentsCount() (int, error) {
 	return idx.repository.GetDocumentsCount()
 }
 
-func (idx *indexer) GetDocumentsByWord(word int) (map[uuid.UUID]*model.WordCountAndPositions, error) {
+func (idx *indexer) GetDocumentsByWord(word int) (map[[32]byte]*model.WordCountAndPositions, error) {
 	return idx.repository.GetDocumentsByWord(word)
 }

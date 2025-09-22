@@ -4,7 +4,6 @@ go 1.24.3
 
 require (
 	github.com/dgraph-io/badger/v3 v3.2103.5
-	github.com/google/uuid v1.6.0
 	golang.org/x/net v0.35.0
 )
 

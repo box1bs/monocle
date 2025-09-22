@@ -1,9 +1,7 @@
 package model
 
-import "github.com/google/uuid"
-
 type Document struct {
-	Id 				uuid.UUID	`json:"id"`
+	Id 				[32]byte	`json:"id"`
 	URL				string		`json:"url"`
 	WordCount 		int			`json:"words_count"`
 	WordVec 		[][]float64	`json:"word_vec"`

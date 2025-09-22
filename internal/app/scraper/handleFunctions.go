@@ -59,26 +59,16 @@ func normalizeUrl(rawUrl string) (string, error) {
 		return "", err
 	}
 
-	parsedUrl = cleanUTMParams(parsedUrl)
 	parsedUrl.Host = strings.TrimPrefix(parsedUrl.Host, "www.")
 
 	var normalized strings.Builder
 	normalized.WriteString(strings.ToLower(parsedUrl.Host))
-	normalized.WriteString(strings.ToLower(parsedUrl.Path))
+	path := strings.ToLower(strings.TrimSuffix(parsedUrl.Path, "/"))
+    if !strings.HasPrefix(path, "/") && path != "" {
+        normalized.WriteString("/" + path)
+    }
 
-	result := normalized.String()
-	return strings.TrimSuffix(result, "/"), nil
-}
-
-func cleanUTMParams(rawURL *url.URL) *url.URL {
-	query := rawURL.Query()
-	for key := range query {
-		if strings.HasPrefix(key, "utm_") {
-			query.Del(key)
-		}
-	}
-	rawURL.RawQuery = query.Encode()
-	return rawURL
+	return normalized.String(), nil
 }
 
 func getSitemapURLs(URL string, cli *http.Client, limiter int) ([]string, error) {

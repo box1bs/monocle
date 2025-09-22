@@ -1,13 +1,14 @@
 package scraper
 
 import (
+	"crypto/sha256"
 	"io"
 	"regexp"
 
 	"github.com/box1bs/Saturday/internal/app/scraper/tree"
 	"github.com/box1bs/Saturday/internal/model"
 	"github.com/box1bs/Saturday/pkg/parser"
-	
+
 	"bufio"
 	"context"
 	"fmt"
@@ -16,9 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-	
+
 	"golang.org/x/net/html"
-	"github.com/google/uuid"
 )
 
 var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
@@ -26,7 +26,7 @@ var urlRegex = regexp.MustCompile(`^https?://`)
 
 type indexer interface {
     HandleDocumentWords(*model.Document, []model.Passage) error
-	IsCrawledContent(uuid.UUID, []model.Passage) (bool, error)
+	IsCrawledContent([32]byte, []model.Passage) (bool, error)
 }
 
 type workerPool interface {
@@ -150,7 +150,7 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 	ws.write(currentURL)
 
     document := &model.Document{
-        Id: uuid.New(),
+        Id: sha256.Sum256([]byte(normalized)),
         URL: currentURL,
     }
 

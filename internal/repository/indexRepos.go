@@ -12,7 +12,6 @@ import (
 
 	"github.com/box1bs/Saturday/internal/model"
 	"github.com/dgraph-io/badger/v3"
-	"github.com/google/uuid"
 )
 
 type IndexRepository struct {
@@ -60,7 +59,7 @@ func (ir *IndexRepository) SaveVisitedUrls(visitedURLs *sync.Map) error {
 	return nil
 }
 
-func (ir *IndexRepository) IndexDocumentWords(docID uuid.UUID, sequence []int, positions map[string][]model.Position) <- chan error {
+func (ir *IndexRepository) IndexDocumentWords(docID [32]byte, sequence []int, positions map[string][]model.Position) <- chan error {
 	errCh := make(chan error)
 	ir.wg.Add(1)
 	go func() {
@@ -76,7 +75,7 @@ func (ir *IndexRepository) IndexDocumentWords(docID uuid.UUID, sequence []int, p
 		}
 		if err := ir.DB.Update(func(txn *badger.Txn) error {
 			for word, freq := range wordFreq {
-				key := fmt.Appendf(nil, WordDocumentKeyFormat, word, docID.String(), freq)
+				key := fmt.Appendf(nil, WordDocumentKeyFormat, word, docID, freq)
 				if err := txn.Set(key, encoded); err != nil {
 					return err
 				}
@@ -95,8 +94,8 @@ func (ir *IndexRepository) IndexDocumentWords(docID uuid.UUID, sequence []int, p
     return errCh
 }
 
-func (ir *IndexRepository) GetDocumentsByWord(word int) (map[uuid.UUID]*model.WordCountAndPositions, error) {
-	revertWordIndex := make(map[uuid.UUID]*model.WordCountAndPositions)
+func (ir *IndexRepository) GetDocumentsByWord(word int) (map[[32]byte]*model.WordCountAndPositions, error) {
+	revertWordIndex := make(map[[32]byte]*model.WordCountAndPositions)
 	wprefix := fmt.Appendf(nil, "%d_", word)
 	return revertWordIndex, ir.DB.View(func(txn *badger.Txn) error {
 		it1 := txn.NewIterator(badger.DefaultIteratorOptions)
@@ -110,11 +109,7 @@ func (ir *IndexRepository) GetDocumentsByWord(word int) (map[uuid.UUID]*model.Wo
 				key := string(item.Key())
 				keyPart := strings.TrimPrefix(key, string(wprefix))
 				splited := strings.SplitN(keyPart, "_", 2)
-				id, err := uuid.Parse(splited[0])
-				if err != nil {
-					errCh <- err
-					return
-				}
+				id := [32]byte([]byte(splited[0]))
 				val, err := item.ValueCopy(nil)
 				if err != nil {
 					errCh <- err
