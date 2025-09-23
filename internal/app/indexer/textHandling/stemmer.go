@@ -144,12 +144,17 @@ func (s *EnglishStemmer) measure(word string) int {
     return m
 }
 
-func (s *EnglishStemmer) TokenizeAndStem(text string) ([]string, error) {
+func (s *EnglishStemmer) TokenizeAndStem(text string, in func(string) []string, index func(string, ...string) error) ([]string, error) {
 	tokens := s.tokenizer.entityTokenize(text)
 
 	stemmedTokens := []string{}
 	for _, token := range tokens {
 		if token.Type == WORD {
+			if in != nil && index != nil {
+				if err := index(token.Value, in(token.Value)...); err != nil {
+					return nil, err
+				}
+			}
 			stemmedTokens = append(stemmedTokens, s.stem(token.Value))
 		} else if token.Type == ALPHANUMERIC {
 			stemmedTokens = append(stemmedTokens, token.Value)

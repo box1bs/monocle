@@ -18,12 +18,12 @@ import (
 type repository interface {
 	LoadVisitedUrls(*sync.Map) error
 	SaveVisitedUrls(*sync.Map) error
-	IndexDocumentWords([32]byte, []int, map[string][]model.Position) <- chan error
+	IndexDocumentWords(context.Context, [32]byte, []int, map[string][]model.Position) <- chan error
 	GetDocumentsByWord(int) (map[[32]byte]*model.WordCountAndPositions, error)
-	IndexNGrams(...string) error
+	IndexNGrams(string, ...string) error
 	GetWordsByNGrams(...string) ([]string, error)
 	
-	SaveDocument(doc *model.Document) error
+	SaveDocument(context.Context, *model.Document) <- chan error
 	GetDocumentByID([32]byte) (*model.Document, error)
 	GetAllDocuments() ([]*model.Document, error)
 	GetDocumentsCount() (int, error)
@@ -32,6 +32,9 @@ type repository interface {
 	
 	TransferToSequence(...string) ([]int, error)
 	SaveToSequence(...string) ([]int, error)
+
+	IndexDocHashes(context.Context, [32]byte, [][32]byte) <- chan error
+	GetDocumentsByHash([][32]byte) ([][32]byte, error)
 }
 
 type logger interface {
@@ -75,12 +78,12 @@ func (idx *indexer) Index(config *configs.ConfigData, global context.Context) {
 	}, wp, idx, global, idx.logger.Write, idx.vectorizer.Vectorize).Run()
 }
 
-func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Passage) error {
+func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Passage, hashedParts [][32]byte) error {
 	var i = 0
 	var sequence []int
 	positions := map[string][]model.Position{}
 	for _, passage := range passages {
-		stemmed, err := idx.stemmer.TokenizeAndStem(passage.Text)
+		stemmed, err := idx.stemmer.TokenizeAndStem(passage.Text, idx.sc.BreakToNGrams, idx.repository.IndexNGrams)
 		if err != nil {
 			return err
 		}
@@ -100,14 +103,40 @@ func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Pa
 			i++
 		}
 	}
-	ch := idx.repository.IndexDocumentWords(doc.Id, sequence, positions)
-	idx.repository.SaveDocument(doc)
 
-	return <- ch
+	
+	c, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	wg := new(sync.WaitGroup)
+	
+	errCh := make(chan error, 3)
+	defer close(errCh)
+	go func() { errCh <- func() error { 
+			wg.Add(1)
+			defer wg.Done()
+			return <-idx.repository.IndexDocumentWords(c, doc.Id, sequence, positions) 
+		}() }()
+	go func() { errCh <- func() error { 
+			wg.Add(1)
+			defer wg.Done()
+			return <-idx.repository.IndexDocHashes(c, doc.Id, hashedParts)
+		}() }()
+	go func() { errCh <- func() error {
+			wg.Add(1)
+			defer wg.Done()
+			return <-idx.repository.SaveDocument(c, doc)
+		}() }()
+
+
+	err := <-errCh
+	cancel()
+	wg.Wait()
+	return err
 }
 
 func (idx *indexer) HandleTextQuery(text string) ([]int, error) {
-	stemmed, err := idx.stemmer.TokenizeAndStem(text)
+	stemmed, err := idx.stemmer.TokenizeAndStem(text, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +152,7 @@ func (idx *indexer) HandleTextQuery(text string) ([]int, error) {
 			if err != nil || len(condidates) == 0 {
 				continue
 			}
-			stemmedReplacement, err := idx.stemmer.TokenizeAndStem(idx.sc.BestReplacement(stemmed[i], condidates))
+			stemmedReplacement, err := idx.stemmer.TokenizeAndStem(idx.sc.BestReplacement(stemmed[i], condidates), nil, nil)
 			if err != nil || len(stemmedReplacement) == 0 {
 				continue
 			}
@@ -165,7 +194,7 @@ func (idx *indexer) IsCrawledContent(id [32]byte, content []model.Passage) (bool
 
 	if crawled {
 		doc.Id = id
-		if err = idx.repository.SaveDocument(doc); err != nil {
+		if err := <- idx.repository.SaveDocument(context.Background(), doc); err != nil {
 			return true, err
 		}
 	}

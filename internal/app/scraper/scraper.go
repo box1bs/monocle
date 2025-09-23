@@ -25,7 +25,7 @@ var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 var urlRegex = regexp.MustCompile(`^https?://`)
 
 type indexer interface {
-    HandleDocumentWords(*model.Document, []model.Passage) error
+    HandleDocumentWords(*model.Document, []model.Passage, [][32]byte) error
 	IsCrawledContent([32]byte, []model.Passage) (bool, error)
 }
 
@@ -53,6 +53,7 @@ type ConfigData struct {
 	MaxLinksInPage 	int
 	Rate           	int
 	OnlySameDomain  bool
+	DocNGramCount 	int
 }
 
 const sitemap = "sitemap.xml"
@@ -166,6 +167,13 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 		return
 	}
 
+	
+
+	fullText := strings.Builder{}
+	for _, passage := range passages {
+		fullText.WriteString(passage.Text)
+	}
+
 	if len(urls) > 0 {
 		links = append(links, urls...)
 	}
@@ -173,17 +181,13 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 	c, cancel = context.WithTimeout(ctx, time.Second * 5)
 	defer cancel()
 	
-	fullText := strings.Builder{}
-	for _, passage := range passages {
-		fullText.WriteString(passage.Text)
-	}
 	document.WordVec, err = ws.vectorize(fullText.String(), c)
 	if err != nil {
 		ws.write(fmt.Sprintf("error vectorizing page: %s with error %v\n", currentURL, err))
 		return
 	}
 
-    if err := ws.idx.HandleDocumentWords(document, passages); err != nil {
+    if err := ws.idx.HandleDocumentWords(document, passages, ws.breakToDocNGrams(ws.cfg.DocNGramCount, fullText.String())); err != nil {
 		ws.write(fmt.Sprintf("error handling words for page: %s with error %v\n", currentURL, err))
 		return
 	}
@@ -451,4 +455,19 @@ func (ws *webScraper) processSitemap(baseURL, sitemapURL string) ([]string, erro
 	}
 
     return nextUrls, nil
+}
+
+func (ws *webScraper) breakToDocNGrams(count int, str string) [][32]byte {
+	input := [][]byte{}
+	for i := 1; i <= len(str) / count; i++ {
+		input = append(input, []byte(str[count * (i - 1):count * i]))
+	}
+	input = append(input, []byte(str[count * (len(str) / count):]))
+
+	hashedInput := [][32]byte{}
+	for _, in := range input {
+		hashedInput = append(hashedInput, sha256.Sum256(in))
+	}
+
+	return hashedInput
 }

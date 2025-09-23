@@ -1,9 +1,11 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"slices"
 
@@ -44,18 +46,29 @@ func (ir *IndexRepository) bytesToDocument(body []byte) (*model.Document, error)
 	return doc, err
 }
 
-func (ir *IndexRepository) SaveDocument(doc *model.Document) error {
-	docBytes, err := ir.documentToBytes(doc)
-	if err != nil {
-		return err
-	}
+func (ir *IndexRepository) SaveDocument(c context.Context, doc *model.Document) <- chan error {
+	errCh := make(chan error)
 
-	return ir.DB.Update(func(txn *badger.Txn) error {
-		if err := txn.Set([]byte("doc:" + string(doc.Id[:])), docBytes); err != nil {
-			return err
+	go func() {
+		docBytes, err := ir.documentToBytes(doc)
+		if err != nil {
+			errCh <- err
 		}
-		return nil
-	})
+
+		errCh <- ir.DB.Update(func(txn *badger.Txn) error {
+			select {
+			case <- c.Done():
+				return nil
+			default:
+			}
+			if err := txn.Set([]byte("doc:" + string(doc.Id[:])), docBytes); err != nil {
+				return err
+			}
+			return nil
+		})
+	}()
+
+	return errCh
 }
 
 func (ir *IndexRepository) GetDocumentByID(docID [32]byte) (*model.Document, error) {
@@ -184,4 +197,65 @@ func (ir *IndexRepository) CheckContent(id [32]byte, hash [32]byte) (bool, *mode
 		}
 	}
 	return false, nil, err
+}
+
+func (ir *IndexRepository) IndexDocHashes(c context.Context, id [32]byte, hashes [][32]byte) <- chan error {
+	errCh := make(chan error)
+	go func() {
+		errCh <- ir.DB.Update(func(txn *badger.Txn) error {
+			for _, hash := range hashes {
+				select {
+				case <- c.Done():
+					return nil
+				default:
+				}
+
+				key := fmt.Sprintf("hash:%s", hash)
+				item, err := txn.Get([]byte(key))
+				if err == badger.ErrKeyNotFound {
+					if err = txn.Set([]byte(key), hash[:]); err != nil {
+						return err
+					}
+				} else if err != nil {
+					return err
+				}
+				val, err := item.ValueCopy(nil)
+				if err != nil {
+					return err
+				}
+				docs := strings.Split(string(val), ",")
+				slices.Contains(docs, string(hash[:]))
+				docs = append(docs, string(hash[:]))
+				if err = txn.Set([]byte(key), []byte(strings.Join(docs, ","))); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}()
+	return errCh
+}
+
+func (ir *IndexRepository) GetDocumentsByHash(hashes [][32]byte) ([][32]byte, error) {
+	ids := [][32]byte{}
+	err := ir.DB.View(func(txn *badger.Txn) error {
+		for _, hash := range hashes {
+			key := fmt.Sprintf("hash:%s", hash)
+			item, err := txn.Get([]byte(key))
+			if err == badger.ErrKeyNotFound {
+				return nil
+			} else if err != nil {
+				return err
+			}
+			val, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			for _, id := range strings.Split(string(val), ",") {
+				ids = append(ids, [32]byte([]byte(id)))
+			}
+		}
+		return nil
+	})
+	return ids, err
 }

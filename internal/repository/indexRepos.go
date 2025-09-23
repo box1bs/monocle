@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -59,7 +60,7 @@ func (ir *IndexRepository) SaveVisitedUrls(visitedURLs *sync.Map) error {
 	return nil
 }
 
-func (ir *IndexRepository) IndexDocumentWords(docID [32]byte, sequence []int, positions map[string][]model.Position) <- chan error {
+func (ir *IndexRepository) IndexDocumentWords(c context.Context, docID [32]byte, sequence []int, positions map[string][]model.Position) <- chan error {
 	errCh := make(chan error)
 	ir.wg.Add(1)
 	go func() {
@@ -75,6 +76,11 @@ func (ir *IndexRepository) IndexDocumentWords(docID [32]byte, sequence []int, po
 		}
 		if err := ir.DB.Update(func(txn *badger.Txn) error {
 			for word, freq := range wordFreq {
+				select {
+				case <- c.Done():
+					return nil
+				default:
+				}
 				key := fmt.Appendf(nil, WordDocumentKeyFormat, word, docID, freq)
 				if err := txn.Set(key, encoded); err != nil {
 					return err
@@ -134,13 +140,13 @@ func (ir *IndexRepository) GetDocumentsByWord(word int) (map[[32]byte]*model.Wor
 	})
 }
 
-func (ir *IndexRepository) IndexNGrams(nGrams ...string) error {
+func (ir *IndexRepository) IndexNGrams(word string, nGrams ...string) error {
 	err := ir.DB.Update(func(txn *badger.Txn) error {
 		for _, nGram := range nGrams {
 			key := fmt.Sprintf("ngram:%s", string(nGram))
 			item, err := txn.Get([]byte(key))
 			if err == badger.ErrKeyNotFound {
-				if err = txn.Set([]byte(key), []byte(nGram)); err != nil {
+				if err = txn.Set([]byte(key), []byte(word)); err != nil {
 					return err
 				}
 			} else if err != nil {
@@ -154,7 +160,7 @@ func (ir *IndexRepository) IndexNGrams(nGrams ...string) error {
 			if slices.Contains(words, nGram) {
 				continue
 			}
-			words = append(words, nGram)
+			words = append(words, word)
 			if err = txn.Set([]byte(key), []byte(strings.Join(words, ","))); err != nil {
 				return err
 			}
