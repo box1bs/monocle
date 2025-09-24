@@ -11,7 +11,7 @@ import (
 
 	"slices"
 
-	"github.com/box1bs/Saturday/internal/model"
+	"github.com/box1bs/monocle/internal/model"
 	"github.com/dgraph-io/badger/v3"
 )
 
@@ -52,12 +52,43 @@ func (ir *IndexRepository) SaveVisitedUrls(visitedURLs *sync.Map) error {
 	visitedURLs.Range(func(key, value any) bool {
 		if url, ok := key.(string); ok {
 			ir.DB.Update(func(txn *badger.Txn) error {
-				return txn.Set([]byte("visited:"+url), []byte(""))
+				return txn.Set([]byte("visited:" + url), []byte(""))
 			})
 		}
 		return true
 	})
 	return nil
+}
+
+func (ir *IndexRepository) SavePageRank(numOfUrlEntries map[string]int) error {
+	return ir.DB.Update(func(txn *badger.Txn) error {
+		data, err := json.Marshal(numOfUrlEntries)
+		if err != nil {
+			return err
+		}
+		return txn.Set([]byte("pagerank:"), data)
+	})
+}
+
+func (ir *IndexRepository) LoadPageRank() (map[string]int, error) {
+	out := map[string]int{}
+	if err := ir.DB.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+		if it.ValidForPrefix([]byte("pagerank:")) {
+			val, err := it.Item().ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			if err := json.Unmarshal(val, &out); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (ir *IndexRepository) IndexDocumentWords(c context.Context, docID [32]byte, sequence []int, positions map[string][]model.Position) <- chan error {

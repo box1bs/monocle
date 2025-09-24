@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/box1bs/Saturday/internal/model"
+	"github.com/box1bs/monocle/internal/model"
 )
 
 type index interface {

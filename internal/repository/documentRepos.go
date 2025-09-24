@@ -9,7 +9,7 @@ import (
 
 	"slices"
 
-	"github.com/box1bs/Saturday/internal/model"
+	"github.com/box1bs/monocle/internal/model"
 	"github.com/dgraph-io/badger/v3"
 )
 
@@ -199,10 +199,15 @@ func (ir *IndexRepository) CheckContent(id [32]byte, hash [32]byte) (bool, *mode
 	return false, nil, err
 }
 
+const (
+	hashWordKey = "hash:%s"
+	docHashesKey = "docHashes:%s"
+)
+
 func (ir *IndexRepository) IndexDocHashes(c context.Context, id [32]byte, hashes [][32]byte) <- chan error {
-	errCh := make(chan error)
+	tCh := make(chan error)
 	go func() {
-		errCh <- ir.DB.Update(func(txn *badger.Txn) error {
+		if err := ir.DB.Update(func(txn *badger.Txn) error {
 			for _, hash := range hashes {
 				select {
 				case <- c.Done():
@@ -210,10 +215,10 @@ func (ir *IndexRepository) IndexDocHashes(c context.Context, id [32]byte, hashes
 				default:
 				}
 
-				key := fmt.Sprintf("hash:%s", hash)
+				key := fmt.Sprintf(hashWordKey, hash)
 				item, err := txn.Get([]byte(key))
 				if err == badger.ErrKeyNotFound {
-					if err = txn.Set([]byte(key), hash[:]); err != nil {
+					if err = txn.Set([]byte(key), id[:]); err != nil {
 						return err
 					}
 				} else if err != nil {
@@ -231,16 +236,46 @@ func (ir *IndexRepository) IndexDocHashes(c context.Context, id [32]byte, hashes
 				}
 			}
 			return nil
-		})
+		}); err != nil {
+			tCh <- err
+		}
 	}()
+
+	errCh := make(chan error, 2)
+	go func() {
+		defer close(tCh)
+		if err := <- tCh; err != nil {
+			errCh <- err
+		}
+	}()
+
+	if err := ir.DB.Update(func(txn *badger.Txn) error {
+		key := fmt.Appendf(nil, docHashesKey, id)
+		_, err := txn.Get(key)
+		if err == badger.ErrKeyNotFound {
+			save := []string{}
+			for _, hashPart := range hashes {
+				save = append(save, string(hashPart[:]))
+			}
+			if err = txn.Set(key, []byte(strings.Join(save, ","))); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		errCh <- err
+	}
+
 	return errCh
 }
 
-func (ir *IndexRepository) GetDocumentsByHash(hashes [][32]byte) ([][32]byte, error) {
+func (ir *IndexRepository) GetDocumentsByHash(hashes [][32]byte) ([][][32]byte, error) {
 	ids := [][32]byte{}
-	err := ir.DB.View(func(txn *badger.Txn) error {
+	if err := ir.DB.View(func(txn *badger.Txn) error {
 		for _, hash := range hashes {
-			key := fmt.Sprintf("hash:%s", hash)
+			key := fmt.Sprintf(hashWordKey, hash)
 			item, err := txn.Get([]byte(key))
 			if err == badger.ErrKeyNotFound {
 				return nil
@@ -251,11 +286,41 @@ func (ir *IndexRepository) GetDocumentsByHash(hashes [][32]byte) ([][32]byte, er
 			if err != nil {
 				return err
 			}
-			for _, id := range strings.Split(string(val), ",") {
+			for id := range strings.SplitSeq(string(val), ",") {
 				ids = append(ids, [32]byte([]byte(id)))
 			}
 		}
 		return nil
-	})
-	return ids, err
+	}); err != nil {
+		return nil, err
+	}
+
+	similarHashes := [][][32]byte{}
+	if err := ir.DB.View(func(txn *badger.Txn) error {
+		for _, id := range ids {
+			key := fmt.Sprintf(docHashesKey, id)
+			item, err := txn.Get([]byte(key))
+			if err != nil {
+				if err == badger.ErrKeyNotFound {
+					continue
+				}
+				return err
+			}
+			val, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			hash := [][32]byte{}
+			for hashes := range strings.SplitSeq(string(val), ",") {
+				hash = append(hash, [32]byte([]byte(hashes)))
+			}
+			if len(hash) > 0 {
+				similarHashes = append(similarHashes, hash)
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return similarHashes, nil
 }

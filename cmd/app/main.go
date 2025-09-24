@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/box1bs/Saturday/configs"
-	"github.com/box1bs/Saturday/internal/app/indexer"
-	"github.com/box1bs/Saturday/internal/app/searcher"
-	"github.com/box1bs/Saturday/internal/model"
-	"github.com/box1bs/Saturday/internal/repository"
-	"github.com/box1bs/Saturday/logs/logger"
+	"github.com/box1bs/monocle/configs"
+	"github.com/box1bs/monocle/internal/app/indexer"
+	"github.com/box1bs/monocle/internal/app/searcher"
+	"github.com/box1bs/monocle/internal/model"
+	"github.com/box1bs/monocle/internal/repository"
+	"github.com/box1bs/monocle/logs/logger"
 )
 
 func main() {

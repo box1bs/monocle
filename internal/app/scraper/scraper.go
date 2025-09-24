@@ -5,9 +5,8 @@ import (
 	"io"
 	"regexp"
 
-	"github.com/box1bs/Saturday/internal/app/scraper/tree"
-	"github.com/box1bs/Saturday/internal/model"
-	"github.com/box1bs/Saturday/pkg/parser"
+	"github.com/box1bs/monocle/internal/model"
+	"github.com/box1bs/monocle/pkg/parser"
 
 	"bufio"
 	"context"
@@ -27,6 +26,7 @@ var urlRegex = regexp.MustCompile(`^https?://`)
 type indexer interface {
     HandleDocumentWords(*model.Document, []model.Passage, [][32]byte) error
 	IsCrawledContent([32]byte, []model.Passage) (bool, error)
+	GetSimilarHashes([][32]byte) ([][][32]byte, error)
 }
 
 type workerPool interface {
@@ -38,11 +38,13 @@ type workerPool interface {
 type webScraper struct {
 	client         	*http.Client
 	visited        	*sync.Map
+	mu 				*sync.Mutex
     rateLimiter    	*rateLimiter
 	cfg 		  	*ConfigData
 	pool           	workerPool
 	idx 			indexer
 	globalCtx		context.Context
+	pageRank 		map[string]int
 	write 			func(string)
 	vectorize		func(string, context.Context) ([][]float64, error)
 }
@@ -58,7 +60,7 @@ type ConfigData struct {
 
 const sitemap = "sitemap.xml"
 
-func NewScraper(mp *sync.Map, cfg *ConfigData, wp workerPool, idx indexer, c context.Context, write func(string), vectorize func(string, context.Context) ([][]float64, error)) *webScraper {
+func NewScraper(mp *sync.Map, cfg *ConfigData, wp workerPool, idx indexer, c context.Context, pr map[string]int, write func(string), vectorize func(string, context.Context) ([][]float64, error)) *webScraper {
 	return &webScraper{
 		client: &http.Client{
 			Timeout: 5 * time.Second,
@@ -69,31 +71,37 @@ func NewScraper(mp *sync.Map, cfg *ConfigData, wp workerPool, idx indexer, c con
 			},
 		},
 		visited:        mp,
+		mu: 			new(sync.Mutex),
         rateLimiter:    newRateLimiter(cfg.Rate),
 		cfg: 			cfg,
 		pool:           wp,
 		idx: 			idx,
 		globalCtx:		c,
+		pageRank: 		pr,
 		write: 			write,
 		vectorize:		vectorize,
 	}
 }
 
+type linkToken struct {
+	link 		string
+	sameDomain 	bool
+}
+
 func (ws *webScraper) Run() {
 	defer ws.rateLimiter.shutdown()
 	for _, url := range ws.cfg.StartURLs {
-		node := tree.NewNode(url)
 		ws.pool.Submit(func() {
-			ctx, cancel := context.WithTimeout(ws.globalCtx, 20*time.Second)
+			ctx, cancel := context.WithTimeout(ws.globalCtx, 30 * time.Second)
 			defer cancel()
-			ws.ScrapeWithContext(ctx, url, node, 0)
+			ws.ScrapeWithContext(ctx, url, nil, 0)
 		})
 	}
 	ws.pool.Wait()
 	ws.pool.Stop()
 }
 
-func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, parent *tree.TreeNode, depth int) {
+func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, rules *parser.RobotsTxt, depth int) {
     select {
 	case <-ctx.Done():
 		return
@@ -118,18 +126,18 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 	errCh := make(chan error)
 	go func() {
 		defer close(errCh)
-		if rules, err := parser.FetchRobotsTxt(ctx, currentURL, ws.client); rules != "" && err == nil {
-			robotsTXT := parser.ParseRobotsTxt(rules)
-			parent.SetRules(robotsTXT)
-		} else if parent.GetRules() == nil {
+		if r, err := parser.FetchRobotsTxt(ctx, currentURL, ws.client); r != "" && err == nil {
+			robotsTXT := parser.ParseRobotsTxt(r)
+			*rules = *robotsTXT
+		} else if rules == nil {
 			uri, err := url.Parse(currentURL)
 			if err != nil {
 				errCh <- err
 				return
 			}
-			if rules, err = parser.FetchRobotsTxt(ctx, uri.Scheme + "://" + uri.Host + "/", ws.client); rules != "" && err == nil {
-				robotsTXT := parser.ParseRobotsTxt(rules)
-				parent.SetRules(robotsTXT)
+			if r, err = parser.FetchRobotsTxt(ctx, uri.Scheme + "://" + uri.Host + "/", ws.client); r != "" && err == nil {
+				robotsTXT := parser.ParseRobotsTxt(r)
+				*rules = *robotsTXT
 			}
 		}
 		
@@ -161,22 +169,28 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 
 	c, cancel = context.WithTimeout(ctx, time.Second * 5)
 	defer cancel()
-    links, passages := ws.parseHTMLStream(c, doc, currentURL, parent.GetRules())
+    links, passages := ws.parseHTMLStream(c, doc, currentURL, rules)
 
 	if crawled, err := ws.idx.IsCrawledContent(document.Id, passages); err != nil || crawled {
 		return
 	}
-
-	
 
 	fullText := strings.Builder{}
 	for _, passage := range passages {
 		fullText.WriteString(passage.Text)
 	}
 
-	if len(urls) > 0 {
-		links = append(links, urls...)
-	}
+	linkFilled := make(chan struct{})
+	go func() {
+		defer close(linkFilled)
+		for _, link := range urls {
+			s, err := isSameOrigin(link, currentURL)
+			if err != nil {
+				continue
+			}
+			links = append(links, &linkToken{link: link, sameDomain: s})
+		}
+	}()
 
 	c, cancel = context.WithTimeout(ctx, time.Second * 5)
 	defer cancel()
@@ -187,11 +201,34 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 		return
 	}
 
-    if err := ws.idx.HandleDocumentWords(document, passages, ws.breakToDocNGrams(ws.cfg.DocNGramCount, fullText.String())); err != nil {
+	hash := ws.breakToShingles(ws.cfg.DocNGramCount, fullText.String())
+
+	similarHashes, err := ws.idx.GetSimilarHashes(hash)
+	if err != nil {
+		return
+	}
+
+	cash := map[[32]byte]struct{}{}
+	for _, bytes := range hash {
+		cash[bytes] = struct{}{}
+	}
+
+	for _, docHash := range similarHashes {
+		if ws.checkSimilarity(cash, docHash) > 0.7 {
+			return
+		}
+	}
+
+	ws.mu.Lock()
+	ws.pageRank[normalized]++
+	ws.mu.Unlock()
+
+    if err := ws.idx.HandleDocumentWords(document, passages, hash); err != nil {
 		ws.write(fmt.Sprintf("error handling words for page: %s with error %v\n", currentURL, err))
 		return
 	}
 
+	<- linkFilled
 	if len(links) == 0 {
 		return
 	}
@@ -202,19 +239,18 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 			return
 		default:
 		}
-        child := tree.NewNode(link)
-        parent.AddChild(child)
-		same, err := isSameOrigin(link, currentURL)
-		if err != nil {
+
+		if ws.cfg.OnlySameDomain && !link.sameDomain {
 			continue
 		}
-        if ws.cfg.OnlySameDomain && same {
-            child.SetRules(parent.GetRules())
+        if !(ws.cfg.OnlySameDomain || link.sameDomain) {
+            rules = nil
         }
+
         ws.pool.Submit(func() {
 			c, cancel := context.WithTimeout(ws.globalCtx, 20 * time.Second)
 			defer cancel()
-        	ws.ScrapeWithContext(c, link, child, depth+1)
+        	ws.ScrapeWithContext(c, link.link, rules, depth+1)
         })
     }
 }
@@ -231,11 +267,11 @@ func (ws *webScraper) haveSitemap(url string) ([]string, error) {
 	return urls, err
 }
 
-func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL string, rules *parser.RobotsTxt) (links []string, pasages []model.Passage) {
+func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL string, rules *parser.RobotsTxt) (links []*linkToken, pasages []model.Passage) {
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
 	var tagStack [][2]byte
 	var garbageTagStack []string
-	links = make([]string, 0, ws.cfg.MaxLinksInPage)
+	links = make([]*linkToken, 0, ws.cfg.MaxLinksInPage)
 
 	tokenCount := 0
     const checkContextEvery = 10
@@ -306,17 +342,11 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL 
 									break
 								}
 							}
-							if ws.cfg.OnlySameDomain {
-								same, err := isSameOrigin(link, baseURL)
-								if err != nil {
-									break
-								}
-								if same {
-									links = append(links, link)
-								}
+							same, err := isSameOrigin(link, baseURL)
+							if err != nil {
 								break
 							}
-							links = append(links, link)
+							links = append(links, &linkToken{link: link, sameDomain: same})
 						}
 						break
 					}
@@ -457,17 +487,25 @@ func (ws *webScraper) processSitemap(baseURL, sitemapURL string) ([]string, erro
     return nextUrls, nil
 }
 
-func (ws *webScraper) breakToDocNGrams(count int, str string) [][32]byte {
-	input := [][]byte{}
-	for i := 1; i <= len(str) / count; i++ {
-		input = append(input, []byte(str[count * (i - 1):count * i]))
-	}
-	input = append(input, []byte(str[count * (len(str) / count):]))
-
-	hashedInput := [][32]byte{}
-	for _, in := range input {
-		hashedInput = append(hashedInput, sha256.Sum256(in))
+func (ws *webScraper) breakToShingles(count int, str string) [][32]byte {
+	input := [][32]byte{}
+	for i := range len(str) - count {
+		input = append(input, sha256.Sum256([]byte(str[i:i + count])))
 	}
 
-	return hashedInput
+	return input
+}
+
+func (ws *webScraper) checkSimilarity(original map[[32]byte]struct{}, hash [][32]byte) float64 {
+	cnt := 0.0
+	for _, bytes := range hash {
+		if _, ex := original[bytes]; ex {
+			cnt++
+		}
+	}
+	
+	orLen := float64(len(original))
+	lenH := float64(len(hash))
+
+	return (cnt / orLen + cnt / lenH) / 2.0
 }

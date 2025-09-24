@@ -1,4 +1,4 @@
-module github.com/box1bs/Saturday
+module github.com/box1bs/monocle
 
 go 1.24.3
 

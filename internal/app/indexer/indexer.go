@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/box1bs/Saturday/configs"
-	"github.com/box1bs/Saturday/internal/app/indexer/spellChecker"
-	"github.com/box1bs/Saturday/internal/app/indexer/textHandling"
-	"github.com/box1bs/Saturday/internal/app/scraper"
-	"github.com/box1bs/Saturday/internal/model"
-	"github.com/box1bs/Saturday/pkg/workerPool"
+	"github.com/box1bs/monocle/configs"
+	"github.com/box1bs/monocle/internal/app/indexer/spellChecker"
+	"github.com/box1bs/monocle/internal/app/indexer/textHandling"
+	"github.com/box1bs/monocle/internal/app/scraper"
+	"github.com/box1bs/monocle/internal/model"
+	"github.com/box1bs/monocle/pkg/workerPool"
 )
 
 type repository interface {
@@ -23,6 +23,9 @@ type repository interface {
 	IndexNGrams(string, ...string) error
 	GetWordsByNGrams(...string) ([]string, error)
 	
+	SavePageRank(map[string]int) error
+	LoadPageRank() (map[string]int, error)
+
 	SaveDocument(context.Context, *model.Document) <- chan error
 	GetDocumentByID([32]byte) (*model.Document, error)
 	GetAllDocuments() ([]*model.Document, error)
@@ -34,7 +37,7 @@ type repository interface {
 	SaveToSequence(...string) ([]int, error)
 
 	IndexDocHashes(context.Context, [32]byte, [][32]byte) <- chan error
-	GetDocumentsByHash([][32]byte) ([][32]byte, error)
+	GetDocumentsByHash([][32]byte) ([][][32]byte, error)
 }
 
 type logger interface {
@@ -67,15 +70,23 @@ func (idx *indexer) Index(config *configs.ConfigData, global context.Context) {
 	vis := &sync.Map{}
 	idx.repository.LoadVisitedUrls(vis)
 	defer idx.repository.SaveVisitedUrls(vis)
-
+	
 	wp := workerPool.NewWorkerPool(config.WorkersCount, config.TasksCount)
+	
+	pr, err := idx.repository.LoadPageRank()
+	defer idx.repository.SavePageRank(pr)
+	if err != nil {
+		idx.logger.Write(err.Error())
+		return
+	}
 
 	scraper.NewScraper(vis, &scraper.ConfigData{
 		StartURLs:     	config.BaseURLs,
 		Depth:       	config.MaxDepth,
 		MaxLinksInPage: config.MaxLinksInPage,
 		OnlySameDomain: config.OnlySameDomain,
-	}, wp, idx, global, idx.logger.Write, idx.vectorizer.Vectorize).Run()
+		DocNGramCount: 	64,
+	}, wp, idx, global, pr, idx.logger.Write, idx.vectorizer.Vectorize).Run()
 }
 
 func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Passage, hashedParts [][32]byte) error {
@@ -111,7 +122,6 @@ func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Pa
 	wg := new(sync.WaitGroup)
 	
 	errCh := make(chan error, 3)
-	defer close(errCh)
 	go func() { errCh <- func() error { 
 			wg.Add(1)
 			defer wg.Done()
@@ -128,11 +138,20 @@ func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Pa
 			return <-idx.repository.SaveDocument(c, doc)
 		}() }()
 
+	go func() {
+		wg.Wait()
+		close(errCh)
+	}()
 
-	err := <-errCh
-	cancel()
-	wg.Wait()
-	return err
+	for err := range errCh {
+		if err != nil {
+			cancel()
+			wg.Wait()
+			return err
+		}
+	}
+	
+	return nil
 }
 
 func (idx *indexer) HandleTextQuery(text string) ([]int, error) {
@@ -212,4 +231,8 @@ func (idx *indexer) GetDocumentsCount() (int, error) {
 
 func (idx *indexer) GetDocumentsByWord(word int) (map[[32]byte]*model.WordCountAndPositions, error) {
 	return idx.repository.GetDocumentsByWord(word)
+}
+
+func (idx *indexer) GetSimilarHashes(hashes [][32]byte) ([][][32]byte, error) {
+	return idx.repository.GetDocumentsByHash(hashes)
 }
