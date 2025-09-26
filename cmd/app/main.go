@@ -12,6 +12,7 @@ import (
 
 	"github.com/box1bs/monocle/configs"
 	"github.com/box1bs/monocle/internal/app/indexer"
+	"github.com/box1bs/monocle/internal/app/indexer/textHandling"
 	"github.com/box1bs/monocle/internal/app/searcher"
 	"github.com/box1bs/monocle/internal/model"
 	"github.com/box1bs/monocle/internal/repository"
@@ -42,7 +43,7 @@ func main() {
 	}
 	defer file.Close()
 
-	logger, err := logger.NewAsyncLogger(file)
+	logger, err := logger.NewAsyncLogger(os.Stdout)
 	if err != nil {
 		panic(err)
 	}
@@ -57,10 +58,11 @@ func main() {
 		<-c
 		fmt.Println("\nShutting down...")
 		cancel()
-		os.Exit(0)
+		os.Exit(1)
 	}()
-	
-	i := indexer.NewIndexer(ir, nil, logger, 2, 3)
+
+	vec := textHandling.NewVectorizer()
+	i := indexer.NewIndexer(ir, vec, logger, 2, 3)
 	i.Index(cfg, ctx)
 
 	count, err := i.GetDocumentsCount()
@@ -70,7 +72,7 @@ func main() {
 
 	fmt.Printf("Index built with %d documents. Enter search queries (Ctrl+C to exit):\n", count)
 
-	s := searcher.NewSearcher(i)
+	s := searcher.NewSearcher(i, vec)
 
 	reader := bufio.NewReader(os.Stdin)
 	for {

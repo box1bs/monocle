@@ -18,7 +18,7 @@ import (
 type repository interface {
 	LoadVisitedUrls(*sync.Map) error
 	SaveVisitedUrls(*sync.Map) error
-	IndexDocumentWords(context.Context, [32]byte, []int, map[string][]model.Position) <- chan error
+	IndexDocumentWords(context.Context, [32]byte, []int, map[string][]model.Position) error
 	GetDocumentsByWord(int) (map[[32]byte]*model.WordCountAndPositions, error)
 	IndexNGrams(string, ...string) error
 	GetWordsByNGrams(...string) ([]string, error)
@@ -26,7 +26,7 @@ type repository interface {
 	SavePageRank(map[string]int) error
 	LoadPageRank() (map[string]int, error)
 
-	SaveDocument(context.Context, *model.Document) <- chan error
+	SaveDocument(*model.Document) error
 	GetDocumentByID([32]byte) (*model.Document, error)
 	GetAllDocuments() ([]*model.Document, error)
 	GetDocumentsCount() (int, error)
@@ -35,9 +35,6 @@ type repository interface {
 	
 	TransferToSequence(...string) ([]int, error)
 	SaveToSequence(...string) ([]int, error)
-
-	IndexDocHashes(context.Context, [32]byte, [][32]byte) <- chan error
-	GetDocumentsByHash([][32]byte) ([][][32]byte, error)
 }
 
 type logger interface {
@@ -85,21 +82,27 @@ func (idx *indexer) Index(config *configs.ConfigData, global context.Context) {
 		Depth:       	config.MaxDepth,
 		MaxLinksInPage: config.MaxLinksInPage,
 		OnlySameDomain: config.OnlySameDomain,
+		Rate:			config.Rate,
 		DocNGramCount: 	64,
 	}, wp, idx, global, pr, idx.logger.Write, idx.vectorizer.Vectorize).Run()
 }
 
-func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Passage, hashedParts [][32]byte) error {
+func (idx *indexer) HandleDocumentWords(c context.Context, doc *model.Document, passages []model.Passage) error {
 	var i = 0
 	var sequence []int
 	positions := map[string][]model.Position{}
 	for _, passage := range passages {
+		select {
+		case <- c.Done():
+			return fmt.Errorf("context deadline exided")
+		default:
+		}
 		stemmed, err := idx.stemmer.TokenizeAndStem(passage.Text, idx.sc.BreakToNGrams, idx.repository.IndexNGrams)
 		if err != nil {
 			return err
 		}
 		if len(stemmed) == 0 {
-			return fmt.Errorf("no valid words found")
+			continue
 		}
 
 		s, err := idx.repository.SaveToSequence(stemmed...)
@@ -114,43 +117,14 @@ func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Pa
 			i++
 		}
 	}
-
 	
-	c, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	wg := new(sync.WaitGroup)
-	
-	errCh := make(chan error, 3)
-	go func() { errCh <- func() error { 
-			wg.Add(1)
-			defer wg.Done()
-			return <-idx.repository.IndexDocumentWords(c, doc.Id, sequence, positions) 
-		}() }()
-	go func() { errCh <- func() error { 
-			wg.Add(1)
-			defer wg.Done()
-			return <-idx.repository.IndexDocHashes(c, doc.Id, hashedParts)
-		}() }()
-	go func() { errCh <- func() error {
-			wg.Add(1)
-			defer wg.Done()
-			return <-idx.repository.SaveDocument(c, doc)
-		}() }()
-
-	go func() {
-		wg.Wait()
-		close(errCh)
-	}()
-
-	for err := range errCh {
-		if err != nil {
-			cancel()
-			wg.Wait()
-			return err
-		}
+	if err := idx.repository.IndexDocumentWords(c, doc.Id, sequence, positions); err != nil {
+		return err
 	}
-	
+	if err := idx.repository.SaveDocument(doc); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -207,13 +181,17 @@ func (idx *indexer) IsCrawledContent(id [32]byte, content []model.Passage) (bool
 	hash := sha256.Sum256(c)
 
 	crawled, doc, err := idx.repository.CheckContent(id, hash)
-	if err != nil || doc == nil {
+	if err != nil && err.Error() != "content already exists" {
 		return false, err
+	}
+
+	if doc == nil {
+		return false, nil
 	}
 
 	if crawled {
 		doc.Id = id
-		if err := <- idx.repository.SaveDocument(context.Background(), doc); err != nil {
+		if err := idx.repository.SaveDocument(doc); err != nil {
 			return true, err
 		}
 	}
@@ -231,8 +209,4 @@ func (idx *indexer) GetDocumentsCount() (int, error) {
 
 func (idx *indexer) GetDocumentsByWord(word int) (map[[32]byte]*model.WordCountAndPositions, error) {
 	return idx.repository.GetDocumentsByWord(word)
-}
-
-func (idx *indexer) GetSimilarHashes(hashes [][32]byte) ([][][32]byte, error) {
-	return idx.repository.GetDocumentsByHash(hashes)
 }

@@ -19,16 +19,20 @@ type index interface {
 	HandleTextQuery(string) ([]int, error)
 }
 
+type vectorizer interface {
+	Vectorize(string, context.Context) ([][]float64, error)
+}
+
 type Searcher struct {
 	mu         	*sync.RWMutex
-	vectorizer  *vectorizer
+	vectorizer  vectorizer
 	idx 		index
 }
 
-func NewSearcher(idx index) *Searcher {
+func NewSearcher(idx index, vec vectorizer) *Searcher {
 	return &Searcher{
 		mu:        	&sync.RWMutex{},
-		vectorizer: newVectorizer(),
+		vectorizer: vec,
 		idx:       	idx,
 	}
 }

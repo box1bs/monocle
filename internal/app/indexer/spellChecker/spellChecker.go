@@ -65,13 +65,12 @@ func (s *SpellChecker) levenshteinDistance(word1 string, word2 string) int {
 }
 
 func (sc *SpellChecker) BreakToNGrams(word string) []string {
-    if len(word) < sc.nGramCount {
+    runes := []rune(word)
+    if len(runes) < sc.nGramCount {
         return nil
     }
-
-    runes := []rune(word)
     nGrams := make([]string, 0, len(runes) - sc.nGramCount + 1)
-    for i := 0; i <= len(runes) - sc.nGramCount; i++ {
+    for i := range len(runes) - sc.nGramCount + 1 {
         nGram := make([]rune, sc.nGramCount)
         copy(nGram, runes[i:i + sc.nGramCount])
         nGrams = append(nGrams, string(nGram))

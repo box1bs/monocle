@@ -3,6 +3,7 @@ package scraper
 import (
 	"crypto/sha256"
 	"io"
+	"log"
 	"regexp"
 
 	"github.com/box1bs/monocle/internal/model"
@@ -24,9 +25,8 @@ var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 var urlRegex = regexp.MustCompile(`^https?://`)
 
 type indexer interface {
-    HandleDocumentWords(*model.Document, []model.Passage, [][32]byte) error
+    HandleDocumentWords(context.Context, *model.Document, []model.Passage) error
 	IsCrawledContent([32]byte, []model.Passage) (bool, error)
-	GetSimilarHashes([][32]byte) ([][][32]byte, error)
 }
 
 type workerPool interface {
@@ -54,8 +54,8 @@ type ConfigData struct {
 	Depth       	int
 	MaxLinksInPage 	int
 	Rate           	int
-	OnlySameDomain  bool
 	DocNGramCount 	int
+	OnlySameDomain  bool
 }
 
 const sitemap = "sitemap.xml"
@@ -92,12 +92,13 @@ func (ws *webScraper) Run() {
 	defer ws.rateLimiter.shutdown()
 	for _, url := range ws.cfg.StartURLs {
 		ws.pool.Submit(func() {
-			ctx, cancel := context.WithTimeout(ws.globalCtx, 30 * time.Second)
+			ctx, cancel := context.WithTimeout(ws.globalCtx, 90 * time.Second)
 			defer cancel()
 			ws.ScrapeWithContext(ctx, url, nil, 0)
 		})
 	}
 	ws.pool.Wait()
+	log.Printf("waiting for stoppnig worker pool")
 	ws.pool.Stop()
 }
 
@@ -128,7 +129,7 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 		defer close(errCh)
 		if r, err := parser.FetchRobotsTxt(ctx, currentURL, ws.client); r != "" && err == nil {
 			robotsTXT := parser.ParseRobotsTxt(r)
-			*rules = *robotsTXT
+			rules = robotsTXT
 		} else if rules == nil {
 			uri, err := url.Parse(currentURL)
 			if err != nil {
@@ -137,7 +138,7 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 			}
 			if r, err = parser.FetchRobotsTxt(ctx, uri.Scheme + "://" + uri.Host + "/", ws.client); r != "" && err == nil {
 				robotsTXT := parser.ParseRobotsTxt(r)
-				*rules = *robotsTXT
+				rules = robotsTXT
 			}
 		}
 		
@@ -148,7 +149,7 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 
     ws.rateLimiter.getToken()
     
-	c, cancel := context.WithTimeout(ctx, time.Second * 5)
+	c, cancel := context.WithTimeout(ctx, time.Second * 10)
 	defer cancel()
     doc, err := ws.getHTML(c, currentURL)
     if err != nil || doc == "" {
@@ -164,10 +165,10 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
     }
 
 	if err = <- errCh; err != nil {
-		ws.write(fmt.Sprintf("error fetching robots.txt or sitemap.xml for page: %s with error %v\n", currentURL, err))
+		ws.write(fmt.Sprintln("error fetching robots.txt or sitemap.xml for page: " + currentURL + " with error " + err.Error()))
 	}
 
-	c, cancel = context.WithTimeout(ctx, time.Second * 5)
+	c, cancel = context.WithTimeout(ctx, time.Second * 20)
 	defer cancel()
     links, passages := ws.parseHTMLStream(c, doc, currentURL, rules)
 
@@ -192,7 +193,7 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 		}
 	}()
 
-	c, cancel = context.WithTimeout(ctx, time.Second * 5)
+	c, cancel = context.WithTimeout(ctx, time.Second * 40)
 	defer cancel()
 	
 	document.WordVec, err = ws.vectorize(fullText.String(), c)
@@ -201,35 +202,21 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 		return
 	}
 
-	hash := ws.breakToShingles(ws.cfg.DocNGramCount, fullText.String())
-
-	similarHashes, err := ws.idx.GetSimilarHashes(hash)
-	if err != nil {
-		return
-	}
-
-	cash := map[[32]byte]struct{}{}
-	for _, bytes := range hash {
-		cash[bytes] = struct{}{}
-	}
-
-	for _, docHash := range similarHashes {
-		if ws.checkSimilarity(cash, docHash) > 0.7 {
-			return
-		}
-	}
-
 	ws.mu.Lock()
 	ws.pageRank[normalized]++
 	ws.mu.Unlock()
 
-    if err := ws.idx.HandleDocumentWords(document, passages, hash); err != nil {
+	c, cancel = context.WithTimeout(ws.globalCtx, time.Second * 30)
+	defer cancel()
+	
+    if err := ws.idx.HandleDocumentWords(c, document, passages); err != nil {
 		ws.write(fmt.Sprintf("error handling words for page: %s with error %v\n", currentURL, err))
 		return
 	}
 
 	<- linkFilled
 	if len(links) == 0 {
+		ws.write(fmt.Sprintf("empty links in page %s error\n", currentURL))
 		return
 	}
 
@@ -248,7 +235,7 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
         }
 
         ws.pool.Submit(func() {
-			c, cancel := context.WithTimeout(ws.globalCtx, 20 * time.Second)
+			c, cancel := context.WithTimeout(ws.globalCtx, 90 * time.Second)
 			defer cancel()
         	ws.ScrapeWithContext(c, link.link, rules, depth+1)
         })
@@ -330,7 +317,7 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL 
 							if err != nil {
 								break
 							}
-							if ws.isVisited(normalized) {
+							if _, vis := ws.visited.Load(normalized); vis {
 								break
 							}
 							if rules != nil {
@@ -393,15 +380,7 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL 
 	return
 }
 
-func (ws *webScraper) isVisited(URL string) bool {
-    _, exists := ws.visited.Load(URL)
-    return exists
-}
-
 func (ws *webScraper) getHTML(ctx context.Context, URL string) (string, error) {
-    ctx, cancel := context.WithTimeout(ctx, 5 * time.Second)
-    defer cancel()
-
     req, err := http.NewRequestWithContext(ctx, "GET", URL, nil)
     if err != nil {
         return "", err
@@ -444,7 +423,7 @@ func (ws *webScraper) getHTML(ctx context.Context, URL string) (string, error) {
                     content string
                     err     error
                 }{
-                    content: "",
+                    content: builder.String(),
                     err:     ctx.Err(),
                 }
                 return
@@ -461,12 +440,8 @@ func (ws *webScraper) getHTML(ctx context.Context, URL string) (string, error) {
         }
     }()
 
-    select {
-    case result := <-resultCh:
-        return result.content, result.err
-    case <-ctx.Done():
-        return "", ctx.Err()
-    }
+	r := <- resultCh
+    return r.content, r.err
 }
 
 func (ws *webScraper) processSitemap(baseURL, sitemapURL string) ([]string, error) {
@@ -485,27 +460,4 @@ func (ws *webScraper) processSitemap(baseURL, sitemapURL string) ([]string, erro
 	}
 
     return nextUrls, nil
-}
-
-func (ws *webScraper) breakToShingles(count int, str string) [][32]byte {
-	input := [][32]byte{}
-	for i := range len(str) - count {
-		input = append(input, sha256.Sum256([]byte(str[i:i + count])))
-	}
-
-	return input
-}
-
-func (ws *webScraper) checkSimilarity(original map[[32]byte]struct{}, hash [][32]byte) float64 {
-	cnt := 0.0
-	for _, bytes := range hash {
-		if _, ex := original[bytes]; ex {
-			cnt++
-		}
-	}
-	
-	orLen := float64(len(original))
-	lenH := float64(len(hash))
-
-	return (cnt / orLen + cnt / lenH) / 2.0
 }
