@@ -74,13 +74,13 @@ def get_cls_embeddings(content: str, max_length=512) -> list[list[float]]:
 
     with torch.no_grad():
         if token_type_ids is not None:
-            outputs = model(
+            outputs = bert(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 token_type_ids=token_type_ids,
             )
         else:
-            outputs = model(
+            outputs = bert(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
             )
@@ -106,7 +106,7 @@ def get_ranked():
         x_data.append(X_data(entry))
 
     resp = lr_model.predict(np.array(x_data))
-    return jsonify({'rel': resp})
+    return jsonify({'rel': resp.tolist()})
 
 
 # Run the Flask app

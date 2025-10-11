@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"context"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -18,7 +17,6 @@ import (
 type IndexRepository struct {
 	DB *badger.DB
 	wg *sync.WaitGroup
-	mu *sync.Mutex
 }
 
 func NewIndexRepository(path string) (*IndexRepository, error) {
@@ -29,7 +27,6 @@ func NewIndexRepository(path string) (*IndexRepository, error) {
 	return &IndexRepository{
 		DB: db,
 		wg: new(sync.WaitGroup),
-		mu: new(sync.Mutex),
 	}, nil
 }
 
@@ -51,8 +48,6 @@ func (ir *IndexRepository) LoadVisitedUrls(visitedURLs *sync.Map) error {
 }
 
 func (ir *IndexRepository) SaveVisitedUrls(visitedURLs *sync.Map) error {
-	ir.mu.Lock()
-	defer ir.mu.Unlock()
 	visitedURLs.Range(func(key, value any) bool {
 		if url, ok := key.(string); ok {
 			ir.DB.Update(func(txn *badger.Txn) error {
@@ -65,8 +60,6 @@ func (ir *IndexRepository) SaveVisitedUrls(visitedURLs *sync.Map) error {
 }
 
 func (ir *IndexRepository) SavePageRank(numOfUrlEntries map[string]int) error {
-	ir.mu.Lock()
-	defer ir.mu.Unlock()
 	return ir.DB.Update(func(txn *badger.Txn) error {
 		data, err := json.Marshal(numOfUrlEntries)
 		if err != nil {
@@ -97,7 +90,7 @@ func (ir *IndexRepository) LoadPageRank() (map[string]int, error) {
 	return out, nil
 }
 
-func (ir *IndexRepository) IndexDocumentWords(c context.Context, docID [32]byte, sequence []int, positions map[string][]model.Position) error {
+func (ir *IndexRepository) IndexDocumentWords(docID [32]byte, sequence []int, positions map[string][]model.Position) error {
 	wordFreq := make(map[int]int)
 	for _, word := range sequence {
 		wordFreq[word]++
@@ -106,15 +99,8 @@ func (ir *IndexRepository) IndexDocumentWords(c context.Context, docID [32]byte,
 	if err != nil {
 		return err
 	}
-	ir.mu.Lock()
-	defer ir.mu.Unlock()
 	return ir.DB.Update(func(txn *badger.Txn) error {
 		for word, freq := range wordFreq {
-			select {
-			case <- c.Done():
-				return nil
-			default:
-			}
 			key := fmt.Appendf(nil, WordDocumentKeyFormat, word, docID, freq)
 			if err := txn.Set(key, encoded); err != nil {
 				return err
@@ -165,8 +151,6 @@ func (ir *IndexRepository) GetDocumentsByWord(word int) (map[[32]byte]*model.Wor
 }
 
 func (ir *IndexRepository) IndexNGrams(word string, nGrams ...string) error {
-	ir.mu.Lock()
-	defer ir.mu.Unlock()
 	return ir.DB.Update(func(txn *badger.Txn) error {
 		for _, nGram := range nGrams {
 			key := fmt.Appendf(nil, "ngram:%s", string(nGram))

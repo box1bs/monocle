@@ -24,7 +24,7 @@ func newRateLimiter(rate int) *rateLimiter {
 
 func (rl *rateLimiter) handleLimits(requestsPerSecond int) {
 	defer rl.wg.Done()
-	tic := time.NewTicker(time.Duration(1e9 / float64(requestsPerSecond)))
+	tic := time.NewTicker(time.Second * time.Duration(requestsPerSecond))
 	defer tic.Stop()
 
 	for {

@@ -1,6 +1,7 @@
 package scraper
 
 import (
+	"context"
 	"encoding/xml"
 	"errors"
 	"io"
@@ -80,7 +81,7 @@ func getSitemapURLs(URL string, cli *http.Client, limiter int) ([]string, error)
 	return decodeSitemap(resp.Body, limiter)
 }
 
-func decodeSitemap(r io.Reader, limiter int) ([]string, error) {
+func decodeSitemap(r io.Reader, limiter int) ([]string, error) { // проверка на UTF-8?
 	var urls []string
 	dec := xml.NewDecoder(r)
 	for {
@@ -121,4 +122,13 @@ func isSameOrigin(rawURL string, baseURL string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+func checkContext(ctx context.Context) bool {
+	select {
+		case <-ctx.Done():
+			return true
+		default:
+	}
+	return false
 }

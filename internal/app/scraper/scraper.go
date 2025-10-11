@@ -25,7 +25,7 @@ var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 var urlRegex = regexp.MustCompile(`^https?://`)
 
 type indexer interface {
-    HandleDocumentWords(context.Context, *model.Document, []model.Passage) error
+    HandleDocumentWords(*model.Document, []model.Passage) error
 	IsCrawledContent([32]byte, []model.Passage) (bool, error)
 }
 
@@ -39,7 +39,6 @@ type webScraper struct {
 	client         	*http.Client
 	visited        	*sync.Map
 	mu 				*sync.Mutex
-    rateLimiter    	*rateLimiter
 	cfg 		  	*ConfigData
 	pool           	workerPool
 	idx 			indexer
@@ -72,7 +71,6 @@ func NewScraper(mp *sync.Map, cfg *ConfigData, wp workerPool, idx indexer, c con
 		},
 		visited:        mp,
 		mu: 			new(sync.Mutex),
-        rateLimiter:    newRateLimiter(cfg.Rate),
 		cfg: 			cfg,
 		pool:           wp,
 		idx: 			idx,
@@ -89,12 +87,11 @@ type linkToken struct {
 }
 
 func (ws *webScraper) Run() {
-	defer ws.rateLimiter.shutdown()
 	for _, url := range ws.cfg.StartURLs {
 		ws.pool.Submit(func() {
 			ctx, cancel := context.WithTimeout(ws.globalCtx, 90 * time.Second)
 			defer cancel()
-			ws.ScrapeWithContext(ctx, url, nil, 0)
+			ws.ScrapeWithContext(ctx, url, nil, nil, 0)
 		})
 	}
 	ws.pool.Wait()
@@ -102,12 +99,8 @@ func (ws *webScraper) Run() {
 	ws.pool.Stop()
 }
 
-func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, rules *parser.RobotsTxt, depth int) {
-    select {
-	case <-ctx.Done():
-		return
-	default:
-    }
+func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, rules *parser.RobotsTxt, rl *rateLimiter, depth int) {
+    if checkContext(ctx) {return}
 
     if depth >= ws.cfg.Depth {
         return
@@ -122,51 +115,66 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
         return
     }
 
-	urls := []string{}
-
-	errCh := make(chan error)
-	go func() {
-		defer close(errCh)
-		if r, err := parser.FetchRobotsTxt(ctx, currentURL, ws.client); r != "" && err == nil {
+	if r, err := parser.FetchRobotsTxt(ctx, currentURL, ws.client); r != "" && err == nil {
+		robotsTXT := parser.ParseRobotsTxt(r)
+		rules = robotsTXT
+	} else if rules == nil || len(rules.Rules) == 0 {
+		uri, err := url.Parse(currentURL)
+		if err != nil {
+			log.Printf("error parsing url %s, with error: %v", currentURL, err)
+			return
+		}
+		if r, err = parser.FetchRobotsTxt(ctx, uri.Scheme + "://" + uri.Host + "/", ws.client); r != "" && err == nil {
 			robotsTXT := parser.ParseRobotsTxt(r)
 			rules = robotsTXT
-		} else if rules == nil {
-			uri, err := url.Parse(currentURL)
-			if err != nil {
-				errCh <- err
-				return
-			}
-			if r, err = parser.FetchRobotsTxt(ctx, uri.Scheme + "://" + uri.Host + "/", ws.client); r != "" && err == nil {
-				robotsTXT := parser.ParseRobotsTxt(r)
-				rules = robotsTXT
-			}
+			rl = newRateLimiter(rules.Rules["*"].Delay)
 		}
+	}
 		
-		if urls, err = ws.haveSitemap(currentURL); err != nil {
-			errCh <- err
-		}
-	}()
+	if urls, err := ws.haveSitemap(currentURL); err == nil && len(urls) > 0 {
+		for _, link := range urls {
+			if checkContext(ctx) {return}
 
-    ws.rateLimiter.getToken()
+			same, err := isSameOrigin(link, currentURL)
+			if err != nil {
+				continue
+			}
+
+			if !same && ws.cfg.OnlySameDomain {
+				continue
+			}
+
+			rls := rules
+			newRl := rl //? посмотреть не заменяет ли это действующий объект
+			if !same {
+				rls = nil
+				rl = nil
+			}
+
+            ws.pool.Submit(func() {
+				if checkContext(ws.globalCtx) {return}
+                c, cancel := context.WithTimeout(ws.globalCtx, 90 * time.Second)
+				defer cancel()
+        		ws.ScrapeWithContext(c, link, rls, newRl, depth+1)
+            })
+        }
+	}
     
-	c, cancel := context.WithTimeout(ctx, time.Second * 10)
+	c, cancel := context.WithTimeout(ctx, time.Second * 30)
 	defer cancel()
-    doc, err := ws.getHTML(c, currentURL)
+    doc, err := ws.getHTML(c, currentURL, rl)
     if err != nil || doc == "" {
-		ws.write(fmt.Sprintf("error parsing page: %s\n", currentURL))
+		log.Printf("error parsing page: %s, with error: %v\n", currentURL, err)
         return
     }
-    
-	ws.write(currentURL)
+
+	if checkContext(ctx) {return}
+	//ws.write(currentURL)
 
     document := &model.Document{
         Id: sha256.Sum256([]byte(normalized)),
         URL: currentURL,
     }
-
-	if err = <- errCh; err != nil {
-		ws.write(fmt.Sprintln("error fetching robots.txt or sitemap.xml for page: " + currentURL + " with error " + err.Error()))
-	}
 
 	c, cancel = context.WithTimeout(ctx, time.Second * 20)
 	defer cancel()
@@ -181,63 +189,50 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL string, 
 		fullText.WriteString(passage.Text)
 	}
 
-	linkFilled := make(chan struct{})
-	go func() {
-		defer close(linkFilled)
-		for _, link := range urls {
-			s, err := isSameOrigin(link, currentURL)
-			if err != nil {
-				continue
-			}
-			links = append(links, &linkToken{link: link, sameDomain: s})
-		}
-	}()
-
-	c, cancel = context.WithTimeout(ctx, time.Second * 40)
+	c, cancel = context.WithTimeout(ctx, time.Second * 20)
 	defer cancel()
 	
 	document.WordVec, err = ws.vectorize(fullText.String(), c)
 	if err != nil {
-		ws.write(fmt.Sprintf("error vectorizing page: %s with error %v\n", currentURL, err))
+		log.Printf("error vectorizing page: %s with error %v\n", currentURL, err)
 		return
 	}
+
+	if checkContext(ctx) {return}
 
 	ws.mu.Lock()
 	ws.pageRank[normalized]++
 	ws.mu.Unlock()
-
-	c, cancel = context.WithTimeout(ws.globalCtx, time.Second * 30)
-	defer cancel()
 	
-    if err := ws.idx.HandleDocumentWords(c, document, passages); err != nil {
-		ws.write(fmt.Sprintf("error handling words for page: %s with error %v\n", currentURL, err))
+    if err := ws.idx.HandleDocumentWords(document, passages); err != nil {
+		log.Printf("error handling words for page: %s with error %v\n", currentURL, err)
 		return
 	}
 
-	<- linkFilled
 	if len(links) == 0 {
-		ws.write(fmt.Sprintf("empty links in page %s error\n", currentURL))
+		log.Printf("empty links in page %s\n", currentURL)
 		return
 	}
 
     for _, link := range links {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
+		if checkContext(ctx) {return}
 
 		if ws.cfg.OnlySameDomain && !link.sameDomain {
 			continue
 		}
-        if !(ws.cfg.OnlySameDomain || link.sameDomain) {
-            rules = nil
+
+		rls := rules
+		newRl := rl
+        if !link.sameDomain {
+            rls = nil
+			newRl = nil
         }
 
         ws.pool.Submit(func() {
+			if checkContext(ws.globalCtx) {return}
 			c, cancel := context.WithTimeout(ws.globalCtx, 90 * time.Second)
 			defer cancel()
-        	ws.ScrapeWithContext(c, link.link, rules, depth+1)
+        	ws.ScrapeWithContext(c, link.link, rls, newRl, depth+1)
         })
     }
 }
@@ -315,6 +310,7 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL 
 						if link != "" && len(links) < ws.cfg.MaxLinksInPage {
 							normalized, err := normalizeUrl(link)
 							if err != nil {
+								log.Printf("error normalizing url: %s, with error: %v", link, err)
 								break
 							}
 							if _, vis := ws.visited.Load(normalized); vis {
@@ -323,6 +319,7 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL 
 							if rules != nil {
 								uri, err := url.Parse(link)
 								if err != nil {
+									log.Printf("error parsing url: %s, with error: %v", link, err)
 									break
 								}
 								if !rules.IsAllowed(userAgent, uri.Path) {
@@ -331,6 +328,7 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL 
 							}
 							same, err := isSameOrigin(link, baseURL)
 							if err != nil {
+								log.Printf("error with url: %s, with error: %v", link, err)
 								break
 							}
 							links = append(links, &linkToken{link: link, sameDomain: same})
@@ -380,7 +378,7 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent, baseURL 
 	return
 }
 
-func (ws *webScraper) getHTML(ctx context.Context, URL string) (string, error) {
+func (ws *webScraper) getHTML(ctx context.Context, URL string, rl *rateLimiter) (string, error) {
     req, err := http.NewRequestWithContext(ctx, "GET", URL, nil)
     if err != nil {
         return "", err
@@ -399,8 +397,11 @@ func (ws *webScraper) getHTML(ctx context.Context, URL string) (string, error) {
         return "", fmt.Errorf("non-2xx status code: %d", resp.StatusCode)
     }
 
+	if rl != nil {
+		rl.getToken()
+	}
     ctype := resp.Header.Get("Content-Type")
-    if !strings.HasPrefix(strings.ToLower(ctype), "text/html") {
+    if !strings.Contains(strings.ToLower(ctype), "text/html") {
         return "", fmt.Errorf("unsupported content type: %s", ctype)
     }
 

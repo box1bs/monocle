@@ -50,9 +50,6 @@ func (ir *IndexRepository) SaveDocument(doc *model.Document) error {
 		return err
 	}
 
-	ir.mu.Lock()
-	defer ir.mu.Unlock()
-
 	return ir.DB.Update(func(txn *badger.Txn) error {
 		if err := txn.Set([]byte("doc:" + string(doc.Id[:])), docBytes); err != nil {
 			return err
@@ -154,9 +151,6 @@ func (ir *IndexRepository) CheckContent(id [32]byte, hash [32]byte) (bool, *mode
 		doc *model.Document
 	)
 	existError := "content already exists"
-
-	ir.mu.Lock()
-	defer ir.mu.Unlock()
 
 	err = ir.DB.Update(func(txn *badger.Txn) error {
 		pref := fmt.Appendf(nil, "%s_", hash)

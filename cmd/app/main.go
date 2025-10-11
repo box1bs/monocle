@@ -58,7 +58,7 @@ func main() {
 		<-c
 		fmt.Println("\nShutting down...")
 		cancel()
-		os.Exit(1)
+		//os.Exit(1)
 	}()
 
 	vec := textHandling.NewVectorizer()
@@ -83,7 +83,7 @@ func main() {
 			return
 		}
 		t := time.Now()
-		Present(s.Search(query, 0.01, 100))
+		Present(s.Search(query, 100))
 		fmt.Printf("--Search time: %v--\n", time.Since(t))
 	}
 }

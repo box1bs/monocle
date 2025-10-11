@@ -2,6 +2,11 @@ internal/app/semantic_embeddings/__pycache__/
 internal/app/semantic_embeddings/.venv/
 internal/app/semantic_embeddings/.idea/
 
+
+internal/test
+
+index
+
 internal/view/.idea/
 internal/view/.next/
 internal/view/node_modules/

@@ -37,9 +37,6 @@ func (ir *IndexRepository) TransferToSequence(words ...string) ([]int, error) {
 
 func (ir *IndexRepository) SaveToSequence(words ...string) ([]int, error) {
     sequence := make([]int, 0)
-    
-    ir.mu.Lock()
-	defer ir.mu.Unlock()
 
     err := ir.DB.Update(func(txn *badger.Txn) error {
         for _, word := range words {

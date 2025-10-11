@@ -17,18 +17,39 @@ type token struct {
     score   int
 }
 
-func (s *SpellChecker) BestReplacement(s1 string, candidates []string) string {
+//выбирается наименьшая(случайная, если все варинты имеют одинаковую длину) опция замены слова, поэтому надо имплементировать цепи маркова
+func (s *SpellChecker) BestReplacement(s1 string, lenBeforeSpell int, candidates []string) string {
+    if len(candidates) == 0 {
+        return s1
+    }
+
     st := []token{}
 	for _, candidate := range candidates {
 		distance := s.levenshteinDistance(s1, candidate)
-		if len(st) == 0 || distance < st[len(st) - 1].score {
+		if len(st) == 0 || distance <= st[len(st) - 1].score {
             st = append(st, token{
                 s: candidate,
                 score: distance,
             })
         }
 	}
-	return st[len(st) - 1].s
+
+    stackLen := len(st)
+    if st[stackLen - 1].score > s.maxTypo {
+        return s1
+    }
+
+    scores := s.markovChains(nil, nil, nil, lenBeforeSpell, [2]string{"", ""}, st) //????
+    bestScore := 0.0
+    bestChoise := ""
+
+    for i := range stackLen {
+        if score := scores[i] / float64(1 + st[i].score); score > bestScore {
+            bestChoise = st[i].s
+        }
+    }
+    
+    return bestChoise
 }
 
 func (s *SpellChecker) levenshteinDistance(word1 string, word2 string) int {
@@ -64,16 +85,51 @@ func (s *SpellChecker) levenshteinDistance(word1 string, word2 string) int {
     return dp[w1][w2]
 }
 
-func (sc *SpellChecker) BreakToNGrams(word string) []string {
+func (s *SpellChecker) BreakToNGrams(word string) []string {
     runes := []rune(word)
-    if len(runes) < sc.nGramCount {
+    if len(runes) < s.nGramCount {
         return nil
     }
-    nGrams := make([]string, 0, len(runes) - sc.nGramCount + 1)
-    for i := range len(runes) - sc.nGramCount + 1 {
-        nGram := make([]rune, sc.nGramCount)
-        copy(nGram, runes[i:i + sc.nGramCount])
+    nGrams := make([]string, 0, len(runes) - s.nGramCount + 1)
+    for i := range len(runes) - s.nGramCount + 1 {
+        nGram := make([]rune, s.nGramCount)
+        copy(nGram, runes[i:i + s.nGramCount])
         nGrams = append(nGrams, string(nGram))
     }
     return nGrams
+}
+
+// если проблема во втором слове, первое надо записать в prev[1]
+func (sc *SpellChecker) markovChains(treegram map[string]map[string]map[string]int, bigram map[string]map[string]int, unigram map[string]int, queryLenBeforeWord int, prev [2]string, condidates []token) []float64 {
+    out := make([]float64, len(condidates))
+    total := 0
+    switch queryLenBeforeWord {
+    case 0:
+        for _, freq := range unigram {
+            total += freq
+        }
+        for i, c := range condidates {
+            out[i] = float64(unigram[c.s] + 1) / float64(total) / float64(1 + c.score)
+        }
+
+    case 1:
+        for _, freq := range bigram[prev[1]] {
+            total += freq
+        }
+        for i, c := range condidates {
+            out[i] = float64(bigram[prev[1]][c.s] + 1) / float64(total) / float64(1 + c.score)
+        }
+
+    case 2:
+        for _, freq := range treegram[prev[0]][prev[1]] {
+            total += freq
+        }
+        for i, c := range condidates {
+            out[i] = float64(treegram[prev[0]][prev[1]][c.s] + 1) / float64(total) / float64(1 + c.score)
+        }
+
+    default:
+        panic("we don't do this here")
+    }
+    return out
 }
