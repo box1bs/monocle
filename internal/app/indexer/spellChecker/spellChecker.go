@@ -1,5 +1,6 @@
 package spellChecker
 
+//Использование триграмм отнимает слишком много оперативной памяти
 type SpellChecker struct {
 	maxTypo     int
     nGramCount  int
@@ -17,8 +18,7 @@ type token struct {
     score   int
 }
 
-//выбирается наименьшая(случайная, если все варинты имеют одинаковую длину) опция замены слова, поэтому надо имплементировать цепи маркова
-func (s *SpellChecker) BestReplacement(s1 string, lenBeforeSpell int, candidates []string) string {
+func (s *SpellChecker) BestReplacement(s1 string, wordsBefore string, candidates []string, f func(...string) (int, error)) string {
     if len(candidates) == 0 {
         return s1
     }
@@ -39,12 +39,13 @@ func (s *SpellChecker) BestReplacement(s1 string, lenBeforeSpell int, candidates
         return s1
     }
 
-    scores := s.markovChains(nil, nil, nil, lenBeforeSpell, [2]string{"", ""}, st) //????
+    scores := s.markovChains(wordsBefore, st, f)
     bestScore := 0.0
     bestChoise := ""
 
     for i := range stackLen {
         if score := scores[i] / float64(1 + st[i].score); score > bestScore {
+            bestScore = score
             bestChoise = st[i].s
         }
     }
@@ -99,37 +100,35 @@ func (s *SpellChecker) BreakToNGrams(word string) []string {
     return nGrams
 }
 
-// если проблема во втором слове, первое надо записать в prev[1]
-func (sc *SpellChecker) markovChains(treegram map[string]map[string]map[string]int, bigram map[string]map[string]int, unigram map[string]int, queryLenBeforeWord int, prev [2]string, condidates []token) []float64 {
+func (s *SpellChecker) markovChains(prev string, condidates []token, f func(...string) (int, error)) []float64 {
     out := make([]float64, len(condidates))
     total := 0
-    switch queryLenBeforeWord {
-    case 0:
-        for _, freq := range unigram {
-            total += freq
+    if prev == "" {
+        cnts := []int{}
+        for _, t := range condidates {
+            c, err := f(t.s)
+            if err != nil {
+                return nil
+            }
+            total += c
+            cnts = append(cnts, c)
         }
         for i, c := range condidates {
-            out[i] = float64(unigram[c.s] + 1) / float64(total) / float64(1 + c.score)
+            out[i] = float64(cnts[i] + 1) / float64(total) / float64(1 + c.score)
         }
-
-    case 1:
-        for _, freq := range bigram[prev[1]] {
-            total += freq
-        }
-        for i, c := range condidates {
-            out[i] = float64(bigram[prev[1]][c.s] + 1) / float64(total) / float64(1 + c.score)
-        }
-
-    case 2:
-        for _, freq := range treegram[prev[0]][prev[1]] {
-            total += freq
+    } else {
+        cnts := []int{}
+        for _, t := range condidates {
+            c, err := f(prev, t.s)
+            if err != nil {
+                return nil
+            }
+            total += c
+            cnts = append(cnts, c)
         }
         for i, c := range condidates {
-            out[i] = float64(treegram[prev[0]][prev[1]][c.s] + 1) / float64(total) / float64(1 + c.score)
+            out[i] = float64(cnts[i] + 1) / float64(total) / float64(1 + c.score)
         }
-
-    default:
-        panic("we don't do this here")
     }
     return out
 }

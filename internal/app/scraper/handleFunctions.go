@@ -1,6 +1,7 @@
 package scraper
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"errors"
@@ -9,9 +10,11 @@ import (
 	"net/url"
 	"strings"
 	"unicode"
+
+	"golang.org/x/net/html/charset"
 )
 
-func makeAbsoluteURL(rawURL, baseURL string) (string, error) {
+func makeAbsoluteURL(rawURL string, baseURL *url.URL) (string, error) {
 	if rawURL == "" {
 		return "", errors.New("empty url")
 	}
@@ -37,11 +40,7 @@ func makeAbsoluteURL(rawURL, baseURL string) (string, error) {
 		return u.String(), nil
 	}
 
-	base, err := url.Parse(baseURL)
-	if err != nil {
-		return "", err
-	}
-	resolved := base.ResolveReference(u)
+	resolved := baseURL.ResolveReference(u)
 	return resolved.String(), nil
 }
 
@@ -78,12 +77,19 @@ func getSitemapURLs(URL string, cli *http.Client, limiter int) ([]string, error)
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return decodeSitemap(resp.Body, limiter)
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	body = bytes.TrimPrefix(bytes.ReplaceAll(body, []byte(`xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"`), []byte("")), []byte("\xef\xbb\xbf"))
+	return decodeSitemap(bytes.NewReader(bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))), limiter)
 }
 
-func decodeSitemap(r io.Reader, limiter int) ([]string, error) { // проверка на UTF-8?
+func decodeSitemap(r io.Reader, limiter int) ([]string, error) {
 	var urls []string
 	dec := xml.NewDecoder(r)
+	dec.CharsetReader = charset.NewReaderLabel
 	for {
 		token, err := dec.Token()
 		if err == io.EOF {
@@ -110,18 +116,8 @@ func decodeSitemap(r io.Reader, limiter int) ([]string, error) { // провер
 	return urls, nil
 }
 
-func isSameOrigin(rawURL string, baseURL string) (bool, error) {
-	parsedURL, err := url.Parse(rawURL)
-	if err != nil {
-		return false, err
-	}
-
-	parsedBaseURL, err := url.Parse(baseURL)
-	if err != nil || !strings.Contains(parsedBaseURL.Hostname(), parsedURL.Hostname()) {
-		return false, err
-	}
-
-	return true, nil
+func isSameOrigin(rawURL *url.URL, baseURL *url.URL) bool {
+	return strings.Contains(baseURL.Hostname(), rawURL.Hostname())
 }
 
 func checkContext(ctx context.Context) bool {

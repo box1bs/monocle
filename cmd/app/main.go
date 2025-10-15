@@ -62,7 +62,10 @@ func main() {
 	}()
 
 	vec := textHandling.NewVectorizer()
-	i := indexer.NewIndexer(ir, vec, logger, 2, 3)
+	i, err := indexer.NewIndexer(ir, vec, logger, 2, 3)
+	if err != nil {
+		panic(err)
+	}
 	i.Index(cfg, ctx)
 
 	count, err := i.GetDocumentsCount()

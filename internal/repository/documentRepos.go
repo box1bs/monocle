@@ -12,8 +12,8 @@ import (
 )
 
 const (
-    DocumentKeyPrefix = "doc:"
-    WordDocumentKeyFormat = "%d_%s_%d"
+    DocumentKeyPrefix = "doc/?&/"
+    WordDocumentKeyFormat = "/%d_%s_%d"
 )
 
 func (ir *IndexRepository) documentToBytes(doc *model.Document) ([]byte, error) {
@@ -29,14 +29,10 @@ func (ir *IndexRepository) bytesToDocument(body []byte) (*model.Document, error)
 	}
 	err := json.Unmarshal(body, &payload)
 	if err != nil {
-		return nil, err
-	}
-	b := [32]byte{}
-	for i := range 32 {
-		b[i] = payload.Id[i]
+		panic(body)
 	}
 	doc := &model.Document{
-		Id: b,
+		Id: [32]byte(payload.Id),
 		URL: payload.URL,
 		WordCount: payload.WordCount,
 		WordVec: payload.Vec,
@@ -51,7 +47,7 @@ func (ir *IndexRepository) SaveDocument(doc *model.Document) error {
 	}
 
 	return ir.DB.Update(func(txn *badger.Txn) error {
-		if err := txn.Set([]byte("doc:" + string(doc.Id[:])), docBytes); err != nil {
+		if err := txn.Set([]byte(DocumentKeyPrefix + string(doc.Id[:])), docBytes); err != nil {
 			return err
 		}
 		return nil
@@ -61,7 +57,7 @@ func (ir *IndexRepository) SaveDocument(doc *model.Document) error {
 func (ir *IndexRepository) GetDocumentByID(docID [32]byte) (*model.Document, error) {
 	var docBytes []byte
 	err := ir.DB.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte("doc:" + string(docID[:])))
+		item, err := txn.Get([]byte(DocumentKeyPrefix + string(docID[:])))
 		if err != nil {
 			return err
 		}
@@ -145,7 +141,7 @@ func (ir *IndexRepository) GetDocumentsCount() (int, error) {
 }
 
 func (ir *IndexRepository) CheckContent(id [32]byte, hash [32]byte) (bool, *model.Document, error) {
-	key := fmt.Appendf(nil, "%s_%s", hash, id)
+	key := fmt.Appendf(nil, "%s/%s", hash, id)
 	var (
 		err error
 		doc *model.Document

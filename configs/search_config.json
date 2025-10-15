@@ -38,6 +38,5 @@
     "task_count" : 20000,
     "max_links_in_page" : 100,
     "max_depth_crawl" : 6,
-    "only_same_domain" : false,
-    "rate" : 500
+    "only_same_domain" : false
 }

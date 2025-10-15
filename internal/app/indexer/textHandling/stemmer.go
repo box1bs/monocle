@@ -144,24 +144,23 @@ func (s *EnglishStemmer) measure(word string) int {
     return m
 }
 
-func (s *EnglishStemmer) TokenizeAndStem(text string, breakToNGrams func(string) []string, saveNGrams func(string, ...string) error) ([]string, error) {
+func (s *EnglishStemmer) TokenizeAndStem(text string) ([]string, []string, error) {
 	tokens := s.tokenizer.entityTokenize(text)
+	wordTokens := []string{}
 
 	stemmedTokens := []string{}
 	for _, token := range tokens {
 		if token.Type == WORD && len(token.Value) > 0 {
-			if breakToNGrams != nil && saveNGrams != nil {
-				if err := saveNGrams(token.Value, breakToNGrams(token.Value)...); err != nil {
-					return stemmedTokens, err
-				}
+			if stemmed := s.stem(token.Value); stemmed != "" {
+				wordTokens = append(wordTokens, token.Value)
+				stemmedTokens = append(stemmedTokens, stemmed)
 			}
-			stemmedTokens = append(stemmedTokens, s.stem(token.Value))
 		} else if token.Type == ALPHANUMERIC {
 			stemmedTokens = append(stemmedTokens, token.Value)
 		}
 	}
 
-	return stemmedTokens, nil
+	return wordTokens, stemmedTokens, nil
 }
 
 func (s *EnglishStemmer) stem(word string) string {

@@ -43,8 +43,8 @@ func NewSearcher(idx index, vec vectorizer) *Searcher {
 }
 
 type requestRanking struct {
-	tf_idf 			float64
-	bm25 			float64
+	tf_idf 			float64		`json:"-"`
+	bm25 			float64		`json:"-"`
 	WordsCos		float64		`json:"cos"`
 	Dpq				float64		`json:"euclid_dist"`
 	QueryCoverage	float64		`json:"query_coverage"`
@@ -76,19 +76,12 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 		index[terms[i]] = mp
 	}
 
-	result := make([]*model.Document, 0)
-	alreadyIncluded := make(map[[32]byte]struct{})
-	var wg sync.WaitGroup
-	var rankMu sync.Mutex
-	var resultMu sync.Mutex
-	errCh := make(chan error, len(terms))
-
 	avgLen, err := s.idx.GetAVGLen()
 	if err != nil {
 		log.Println(err)
 		return nil
 	}
-
+	
 	length, err := s.idx.GetDocumentsCount()
 	if err != nil {
 		log.Println(err)
@@ -96,6 +89,12 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 	}
 
 	queryLen := len(terms)
+	result := make([]*model.Document, 0)
+	alreadyIncluded := make(map[[32]byte]struct{})
+	var wg sync.WaitGroup
+	var rankMu sync.Mutex
+	var resultMu sync.Mutex
+	done := make(chan struct{})
 
 	for _, term := range terms {
 		wg.Add(1)
@@ -103,10 +102,12 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 			defer wg.Done()
 	
 			idf := math.Log(float64(length) / float64(len(index[term]) + 1)) + 1.0
+			log.Printf("len documents with word: %d, %d", term, len(index[term]))
 	
 			for docID, item := range index[term] {
 				doc, err := s.idx.GetDocumentByID(docID)
 				if err != nil || doc == nil {
+					log.Printf("error: %v, doc: %v", err, doc)
 					continue
 				}
 				
@@ -145,6 +146,7 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 					continue
 				}
 				alreadyIncluded[doc.Id] = struct{}{}
+				log.Println("appended")
 				result = append(result, doc)
 				resultMu.Unlock()
 			}
@@ -153,20 +155,20 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 	
 	go func() {
 		wg.Wait()
-		close(errCh)
+		close(done)
 	}()
 	
 	c, cancel := context.WithTimeout(context.Background(), 5 * time.Second)
 	defer cancel()
 	vec, err := s.vectorizer.Vectorize(query, c)
-	if err != nil {
-		log.Println(err)
+	if err != nil || len(vec) == 0 {
+		log.Printf("error vectorozing query with error: %v", err)
 		return nil
 	}
+
+	log.Printf("result len: %d", len(result))
 	
-	if err := <-errCh; err != nil {
-		return nil
-	}
+	<- done
 	
 	filteredResult := make([]*model.Document, 0)
 	for _, doc := range result {
@@ -188,6 +190,7 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 
 	length = len(filteredResult)
 	if length == 0 {
+		//panic("empty result")
 		return nil
 	}
 
@@ -223,7 +226,7 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 		}
 		bestPos, err := callRankAPI(list, condidates)
 		if err != nil {
-			panic(err)
+			//panic(err)
 			return fl
 		}
 		fl[i * 10 + bestPos], fl[i] = fl[i], fl[i * 10 + bestPos]
@@ -238,7 +241,7 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 		}
 		bestPos, err := callRankAPI(list, condidates)
 		if err != nil {
-			panic(err)
+			//panic(err)
 			return fl
 		}
 		fl[n / 10 * 10 + bestPos], fl[n / 10] = fl[n / 10], fl[n / 10 * 10 + bestPos]

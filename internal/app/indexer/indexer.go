@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"log"
 	"sync"
 
 	"github.com/box1bs/monocle/configs"
@@ -19,11 +20,15 @@ type repository interface {
 	SaveVisitedUrls(*sync.Map) error
 	IndexDocumentWords([32]byte, []int, map[string][]model.Position) error
 	GetDocumentsByWord(int) (map[[32]byte]*model.WordCountAndPositions, error)
-	IndexNGrams(string, ...string) error
-	GetWordsByNGrams(...string) ([]string, error)
+	//IndexNGrams(string, ...string) error
+	//GetWordsByNGrams(...string) ([]string, error)
 	
-	SavePageRank(map[string]int) error
-	LoadPageRank() (map[string]int, error)
+	SavePageRank(map[string]float64) error
+	LoadPageRank() (map[string]float64, error)
+
+	GetProbByWord(...string) (int, error)
+	SaveUnigramProb(map[string]int) error
+	SaveBigramProb(map[string]map[string]int) error
 
 	SaveDocument(*model.Document) error
 	GetDocumentByID([32]byte) (*model.Document, error)
@@ -53,7 +58,7 @@ type indexer struct {
 	logger 		logger
 }
 
-func NewIndexer(repo repository, vec vectorizer, logger logger, maxTypo, nGramCount int) *indexer {
+func NewIndexer(repo repository, vec vectorizer, logger logger, maxTypo, nGramCount int) (*indexer, error) {
 	return &indexer{
 		stemmer:   	textHandling.NewEnglishStemmer(),
 		sc:        	spellChecker.NewSpellChecker(maxTypo, nGramCount),
@@ -61,7 +66,7 @@ func NewIndexer(repo repository, vec vectorizer, logger logger, maxTypo, nGramCo
 		repository: repo,
 		vectorizer: vec,
 		logger:    	logger,
-	}
+	}, nil
 }
 
 func (idx *indexer) Index(config *configs.ConfigData, global context.Context) {
@@ -83,7 +88,6 @@ func (idx *indexer) Index(config *configs.ConfigData, global context.Context) {
 		Depth:       	config.MaxDepth,
 		MaxLinksInPage: config.MaxLinksInPage,
 		OnlySameDomain: config.OnlySameDomain,
-		Rate:			config.Rate,
 		DocNGramCount: 	64,
 	}, wp, idx, global, pr, idx.logger.Write, idx.vectorizer.Vectorize).Run()
 }
@@ -97,16 +101,40 @@ func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Pa
 	defer idx.mu.Unlock()
 
 	for _, passage := range passages {
-		stemmed, err := idx.stemmer.TokenizeAndStem(passage.Text, idx.sc.BreakToNGrams, idx.repository.IndexNGrams)
+		words, stemmed, err := idx.stemmer.TokenizeAndStem(passage.Text)
 		if err != nil {
 			return err
 		}
-		if len(stemmed) == 0 {
+		if len(stemmed) == 0 || len(words) == 0 {
 			continue
+		}
+
+		wl := len(words)
+		bg := map[string]map[string]int{}
+		ug := map[string]int{}
+		for i := range wl {
+			if i + 1 < wl {
+				if _, ok := bg[words[i]]; !ok {
+					bg[words[i]] = map[string]int{}
+				}
+				bg[words[i]][words[i + 1]]++
+			}
+			ug[words[i]]++
+			//if err := idx.repository.IndexNGrams(words[i], idx.sc.BreakToNGrams(words[i])...); err != nil {
+			//	return err
+			//}
+		}
+
+		if err := idx.repository.SaveBigramProb(bg); err != nil {
+			return err
+		}
+		if err := idx.repository.SaveUnigramProb(ug); err != nil {
+			return err
 		}
 
 		s, err := idx.repository.SaveToSequence(stemmed...)
 		if err != nil {
+			log.Printf("error saving to sequence: %v", err)
 			return err
 		}
 		sequence = append(sequence, s...)
@@ -119,9 +147,11 @@ func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Pa
 	}
 	
 	if err := idx.repository.IndexDocumentWords(doc.Id, sequence, positions); err != nil {
+		log.Printf("error indexing words: %v", err)
 		return err
 	}
 	if err := idx.repository.SaveDocument(doc); err != nil {
+		log.Printf("error saving words: %v", err)
 		return err
 	}
 
@@ -132,33 +162,43 @@ func (idx *indexer) HandleTextQuery(text string) ([]int, error) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
-	stemmed, err := idx.stemmer.TokenizeAndStem(text, nil, nil)
+	_, stemmed, err := idx.stemmer.TokenizeAndStem(text)
 	if err != nil {
 		return nil, err
 	}
+
+	log.Println(stemmed)
 
 	sequence, err := idx.repository.TransferToSequence(stemmed...)
 	if err != nil {
 		return nil, err
 	}
-
+	/*
 	for i, word := range sequence {
-		if word == 0 { // переделать оно ищет по нормализованой форме, а нужно по изначальной
-			condidates, err := idx.repository.GetWordsByNGrams(idx.sc.BreakToNGrams(stemmed[i])...)
+		if word == -1 {
+			condidates, err := idx.repository.GetWordsByNGrams(idx.sc.BreakToNGrams(words[i])...)
 			if err != nil || len(condidates) == 0 {
 				continue
 			}
-			stemmedReplacement, err := idx.stemmer.TokenizeAndStem(idx.sc.BestReplacement(stemmed[i], min(i, 2), condidates), nil, nil)
+
+			log.Printf("word: %s, has %d code", words[i], sequence[i])
+
+			before := ""
+			if i > 0 {
+				before = words[i - 1]
+			}
+			_, stemmedReplacement, err := idx.stemmer.TokenizeAndStem(idx.sc.BestReplacement(words[i], before, condidates, idx.repository.GetProbByWord))
 			if err != nil || len(stemmedReplacement) == 0 {
 				continue
 			}
-			replacementSeq, err := idx.repository.TransferToSequence(stemmedReplacement...)
-			if err != nil || len(replacementSeq) == 0 || replacementSeq[0] == 0 {
+			replacementSeq, err := idx.repository.TransferToSequence(stemmedReplacement[0])
+			if err != nil || len(replacementSeq) == 0 || replacementSeq[0] == -1 {
 				continue
 			}
 			sequence[i] = replacementSeq[0]
 		}
 	}
+	*/
 	return sequence, nil
 }
 

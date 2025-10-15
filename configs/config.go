@@ -11,7 +11,6 @@ type ConfigData struct {
 	TasksCount     int      `json:"task_count" validate:"min=100,max=10000"`
 	MaxLinksInPage int      `json:"max_links_in_page" validate:"min=1,max=100"`
 	MaxDepth       int      `json:"max_depth_crawl" validate:"min=1,max=10"`
-	Rate           int      `json:"rate" validate:"min=1,max=1000"`
 	OnlySameDomain bool     `json:"only_same_domain"`
 }
 

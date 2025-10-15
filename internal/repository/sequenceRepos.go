@@ -12,7 +12,7 @@ func (ir *IndexRepository) TransferToSequence(words ...string) ([]int, error) {
         for _, word := range words {
             item, err := txn.Get([]byte("word:" + word))
             if err == badger.ErrKeyNotFound {
-                ids = append(ids, 0)
+                ids = append(ids, -1)
                 continue
             } else if err != nil {
                 return err
@@ -38,48 +38,54 @@ func (ir *IndexRepository) TransferToSequence(words ...string) ([]int, error) {
 func (ir *IndexRepository) SaveToSequence(words ...string) ([]int, error) {
     sequence := make([]int, 0)
 
-    err := ir.DB.Update(func(txn *badger.Txn) error {
-        for _, word := range words {
-            if len(word) == 0 {
-                continue
-            }
-            key := []byte(word)
-            item, err := txn.Get(key)
-            if err == nil {
-                val, err := item.ValueCopy(nil)
-                if err != nil {
-                    return err
-                }
-                id, err := strconv.Atoi(string(val))
-                if err != nil {
-                    return err
-                }
-                sequence = append(sequence, id)
-            } else if err == badger.ErrKeyNotFound {
-                maxId, err := ir.getLastId()
-                if err != nil {
-                    return err
-                }
-                newId := maxId + 1
-                err = txn.Set(key, []byte(strconv.Itoa(newId)))
-                if err != nil {
-                    return err
-                }
-                err = txn.Set([]byte("max_id"), []byte(strconv.Itoa(newId)))
-                if err != nil {
-                    return err
-                }
-                sequence = append(sequence, newId)
-            } else {
-                return err
-            }
+    current := 0
+    txn := ir.DB.NewTransaction(true)
+
+    for _, word := range words {
+        if len(word) == 0 {
+            continue
         }
-        return nil
-    })
-    if err != nil {
-        return nil, err
+        key := []byte(word)
+        item, err := txn.Get(key)
+        if err == nil {
+            val, err := item.ValueCopy(nil)
+            if err != nil {
+                return nil, err
+            }
+            id, err := strconv.Atoi(string(val))
+            if err != nil {
+                return nil, err
+            }
+            sequence = append(sequence, id)
+        } else if err == badger.ErrKeyNotFound {
+            maxId, err := ir.getLastId()
+            if err != nil {
+                return nil, err
+            }
+            newId := maxId + 1
+            err = txn.Set(key, []byte(strconv.Itoa(newId)))
+            if err != nil {
+                return nil, err
+            }
+            err = txn.Set([]byte("max_id"), []byte(strconv.Itoa(newId)))
+            if err != nil {
+                return nil, err
+            }
+            current += 2
+            if current >= batchSize {
+                if err := txn.Commit(); err != nil {
+                    return nil, err
+                }
+                current = 0
+                txn = ir.DB.NewTransaction(true)
+            }
+            sequence = append(sequence, newId)
+        } else {
+            return nil, err
+        }
     }
-    return sequence, nil
+    
+    return sequence, txn.Commit()
 }
 
 func (ir *IndexRepository) getLastId() (int, error) {
