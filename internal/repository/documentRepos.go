@@ -13,7 +13,7 @@ import (
 
 const (
     DocumentKeyPrefix = "doc/?&/"
-    WordDocumentKeyFormat = "/%d_%s_%d"
+    WordDocumentKeyFormat = "%d_%s_%d"
 )
 
 func (ir *IndexRepository) documentToBytes(doc *model.Document) ([]byte, error) {

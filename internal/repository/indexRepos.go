@@ -230,7 +230,7 @@ func (ir *IndexRepository) IndexDocumentWords(docID [32]byte, sequence []int, po
 	txn := ir.DB.NewTransaction(true)
 
 	for word, freq := range wordFreq {
-		key := fmt.Appendf(nil, WordDocumentKeyFormat, word, docID, freq)
+		key := fmt.Appendf(nil, WordDocumentKeyFormat, word, docID[:], freq)
 		if err := txn.Set(key, encoded); err != nil {
 			return err
 		}
@@ -249,7 +249,7 @@ func (ir *IndexRepository) IndexDocumentWords(docID [32]byte, sequence []int, po
 
 func (ir *IndexRepository) GetDocumentsByWord(word int) (map[[32]byte]*model.WordCountAndPositions, error) {
 	revertWordIndex := make(map[[32]byte]*model.WordCountAndPositions)
-	wprefix := fmt.Appendf(nil, "/%d_", word)
+	wprefix := fmt.Appendf(nil, "%d_", word)
 	return revertWordIndex, ir.DB.View(func(txn *badger.Txn) error {
 		it1 := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it1.Close()
@@ -262,6 +262,10 @@ func (ir *IndexRepository) GetDocumentsByWord(word int) (map[[32]byte]*model.Wor
 				key := string(item.Key())
 				keyPart := strings.TrimPrefix(key, string(wprefix))
 				splited := strings.SplitN(keyPart, "_", 2)
+				if len(splited[0]) != 32 {
+					errCh <- fmt.Errorf("invalid id size: %s", splited[0])
+					return
+				}
 				id := [32]byte([]byte(splited[0]))
 				val, err := item.ValueCopy(nil)
 				if err != nil {
