@@ -24,15 +24,18 @@ func NewWorkerPool(size int, queueCapacity int, c context.Context) *WorkerPool {
 		ctx: 		c,	
 	}
 	go func() {
-		t := time.NewTicker(15 * time.Second)
+		t := time.NewTicker(30 * time.Second)
 		for range t.C {
 			select{
 			case <-c.Done():
-				tmp := len(wp.buf)
+				if len(wp.buf) != 0 {
+					continue
+				}
+				tmp := wp.workers
 				<-t.C
-				if tmp == len(wp.buf) {
+				if tmp == wp.workers {
 					t.Stop()
-					wp.cleanTheChan()
+					wp.cleanCalls()
 				}
 			default:
 			}
@@ -44,20 +47,15 @@ func NewWorkerPool(size int, queueCapacity int, c context.Context) *WorkerPool {
 	return wp
 }
 	
-func (wp *WorkerPool) cleanTheChan() {
-	for {
-		select {
-		case <-wp.buf:
-			wp.wg.Done()
-		default:
-			return
-		}
+func (wp *WorkerPool) cleanCalls() {
+	for range wp.workers {
+		wp.wg.Done()
 	}
 }
 
 func (wp *WorkerPool) Submit(task func()) {
 	wp.wg.Add(1)
-	log.Printf("Submitting task. Buffer: %d, Workers: %d", len(wp.buf), wp.workers)
+	log.Printf("Submitting task. Buffer: %d, Workers: %d", len(wp.buf), wp.workers) //заменить на локальный DEBUG тип
 
 	wrap := func() {
 		task()

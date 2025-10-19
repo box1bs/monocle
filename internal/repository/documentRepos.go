@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	DocumentKeyPrefix     = "doc/?&/"
+	DocumentKeyPrefix     = "doc:%s"
 	WordDocumentKeyFormat = "ri:%s_%x"
 )
 
@@ -63,7 +63,7 @@ func (ir *IndexRepository) SaveDocument(doc *model.Document) error {
 	}
 
 	return ir.DB.Update(func(txn *badger.Txn) error {
-		if err := txn.Set([]byte(DocumentKeyPrefix + string(doc.Id[:])), docBytes); err != nil {
+		if err := txn.Set(fmt.Appendf(nil, DocumentKeyPrefix, doc.Id[:]), docBytes); err != nil {
 			return err
 		}
 		return nil
@@ -73,7 +73,7 @@ func (ir *IndexRepository) SaveDocument(doc *model.Document) error {
 func (ir *IndexRepository) GetDocumentByID(docID [32]byte) (*model.Document, error) {
 	var docBytes []byte
 	err := ir.DB.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte(DocumentKeyPrefix + string(docID[:])))
+		item, err := txn.Get(fmt.Appendf(nil, DocumentKeyPrefix, docID[:]))
 		if err != nil {
 			return err
 		}

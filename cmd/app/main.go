@@ -16,17 +16,41 @@ import (
 	"github.com/box1bs/monocle/internal/app/searcher"
 	"github.com/box1bs/monocle/internal/model"
 	"github.com/box1bs/monocle/internal/repository"
-	"github.com/box1bs/monocle/logs/logger"
+	"github.com/box1bs/monocle/pkg/logger"
+	"github.com/joho/godotenv"
 )
 
 func main() {
 	var (
 		configFile = flag.String("config", "configs/search_config.json", "Path to configuration file")
-		logFile    = flag.String("log", "logs/indexedURLs.txt", "Path to log file")
 	)
 	flag.Parse()
 
-	ir, err := repository.NewIndexRepository("index/badger")
+	if err := godotenv.Load(); err != nil {
+		panic(err)
+	}
+
+	infoPath := os.Getenv("INFO_LOG_PATH")
+	iFile, err := os.OpenFile(infoPath, os.O_WRONLY, 0644)
+	if err != nil {
+		panic(err)
+	}
+	defer iFile.Close()
+
+	errorPath := os.Getenv("ERROR_LOG_PATH")
+	erFile, err := os.OpenFile(errorPath, os.O_WRONLY, 0644)
+	if err != nil {
+		panic(err)
+	}
+	defer erFile.Close()
+
+	logger, err := logger.NewAsyncLogger(iFile, erFile)
+	if err != nil {
+		panic(err)
+	}
+	defer logger.Close()
+
+	ir, err := repository.NewIndexRepository("index/badger", logger, 10 * 1024 * 1024)
 	if err != nil {
 		panic(err)
 	}
@@ -36,18 +60,6 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-
-	file, err := os.Create(*logFile)
-	if err != nil {
-		panic(err)
-	}
-	defer file.Close()
-
-	logger, err := logger.NewAsyncLogger(os.Stdout)
-	if err != nil {
-		panic(err)
-	}
-	defer logger.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -62,7 +74,7 @@ func main() {
 	}()
 
 	vec := textHandling.NewVectorizer()
-	i, err := indexer.NewIndexer(ir, vec, logger, 2)
+	i, err := indexer.NewIndexer(ir, vec, logger, 2, 3)
 	if err != nil {
 		panic(err)
 	}

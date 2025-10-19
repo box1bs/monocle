@@ -3,11 +3,13 @@ package spellChecker
 //Использование триграмм отнимает слишком много оперативной памяти
 type SpellChecker struct {
 	maxTypo     int
+    NGramCount  int
 }
 
-func NewSpellChecker(maxTypoLen int) *SpellChecker {
+func NewSpellChecker(maxTypoLen, ngc int) *SpellChecker {
 	return &SpellChecker{
 		maxTypo: maxTypoLen,
+        NGramCount: ngc,
 	}
 }
 

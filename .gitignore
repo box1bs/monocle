@@ -2,7 +2,6 @@ internal/app/semantic_embeddings/__pycache__/
 internal/app/semantic_embeddings/.venv/
 internal/app/semantic_embeddings/.idea/
 
-
 internal/test
 
 index
@@ -19,3 +18,4 @@ logs/*.txt
 main.exe
 
 dataset.csv
+.env

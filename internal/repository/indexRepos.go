@@ -9,24 +9,33 @@ import (
 	"fmt"
 
 	"github.com/box1bs/monocle/internal/model"
+	"github.com/box1bs/monocle/pkg/logger"
 	"github.com/dgraph-io/badger/v3"
 )
 
-const batchSize = 200
+const perEntryOverhead = 64
 
 type IndexRepository struct {
-	DB 		*badger.DB
-	wg 		*sync.WaitGroup
+	DB 			*badger.DB
+	log 		*logger.Logger
+	wg 			*sync.WaitGroup
+	wordBuffer	map[string][]string
+	counts		map[string]int
+	maxTxnBytes int
 }
 
-func NewIndexRepository(path string) (*IndexRepository, error) {
-	db, err := badger.Open(badger.DefaultOptions(path))
+func NewIndexRepository(path string, logger *logger.Logger, maxTransactionBytes int) (*IndexRepository, error) {
+	db, err := badger.Open(badger.DefaultOptions(path).WithLoggingLevel(badger.WARNING))
 	if err != nil {
 		return nil, err
 	}
 	return &IndexRepository{
 		DB: db,
+		log: logger,
 		wg: new(sync.WaitGroup),
+		wordBuffer: make(map[string][]string),
+		counts: make(map[string]int),
+		maxTxnBytes: maxTransactionBytes,
 	}, nil
 }
 
@@ -86,8 +95,11 @@ func (ir *IndexRepository) LoadPageRank() (map[string]float64, error) {
 }
 
 func (ir *IndexRepository) IndexDocumentWords(docID [32]byte, sequence map[string]int, pos map[string][]model.Position) error {
-	current := 0
-	txn := ir.DB.NewTransaction(true)
+	wb := ir.DB.NewWriteBatch()
+	defer wb.Cancel()
+
+	curBytes := 0
+	var flushTreshold = ir.maxTxnBytes / 8
 
 	for word, freq := range sequence {
 		key := fmt.Appendf(nil, WordDocumentKeyFormat, word, docID)
@@ -95,24 +107,25 @@ func (ir *IndexRepository) IndexDocumentWords(docID [32]byte, sequence map[strin
             Count:     freq,
             Positions: pos[word],
         }
+
 		val, err := json.Marshal(wcp)
 		if err != nil {
 			return err
 		}
-		if err := txn.Set(key, val); err != nil {
+		
+		if err := wb.Set(key, val); err != nil {
 			return err
 		}
 
-		current++
-		if current >= batchSize {
-			if err := txn.Commit(); err != nil {
+		curBytes += len(key) + len(val) + perEntryOverhead
+		if curBytes >= flushTreshold {
+			if err := wb.Flush(); err != nil {
 				return err
 			}
-			current = 0
-			txn = ir.DB.NewTransaction(true)
+			curBytes = 0
 		}
 	}
-	return txn.Commit()
+	return wb.Flush()
 }
 
 func (ir *IndexRepository) GetDocumentsByWord(word string) (map[[32]byte]model.WordCountAndPositions, error) {
@@ -121,58 +134,29 @@ func (ir *IndexRepository) GetDocumentsByWord(word string) (map[[32]byte]model.W
 	return revertWordIndex, ir.DB.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
-		errCh := make(chan error)
-		ir.wg.Add(1)
-		go func() {
-			defer ir.wg.Done()
-			for it.Seek(wprefix); it.ValidForPrefix(wprefix); it.Next() {
-				item := it.Item()
+		for it.Seek(wprefix); it.ValidForPrefix(wprefix); it.Next() {
+			item := it.Item()
+			keyPart := item.Key()[len(wprefix):]
 
-				keyPart := item.Key()[len(wprefix):]
-				decoded, err := hex.DecodeString(string(keyPart))
-				if err != nil {
-					errCh <- err
-					return
-				}
-
-				id := [32]byte{}
-				copy(id[:], decoded)
-
-				val, err := item.ValueCopy(nil)
-				if err != nil {
-					errCh <- err
-					return
-				}
-				positions := model.WordCountAndPositions{}
-				if err := json.Unmarshal(val, &positions); err != nil {
-					errCh <- err
-					return
-				}
-				revertWordIndex[id] = positions
+			decoded, err := hex.DecodeString(string(keyPart))
+			if err != nil {
+				return err
 			}
-		}()
+			id := [32]byte{}
+			copy(id[:], decoded)
 
-		go func() {
-			ir.wg.Wait()
-			close(errCh)
-		}()
-		
-		return <-errCh
-	})
-}
+			val, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			positions := model.WordCountAndPositions{}
+			if err := json.Unmarshal(val, &positions); err != nil {
+				return err
+			}
 
-func (ir *IndexRepository) GetAllWords() []string {
-	dictionary := []string{}
-	wpref := "ri:"
-	alreadyIncluded := map[string]struct{}{}
-	it := ir.DB.NewTransaction(false).NewIterator(badger.DefaultIteratorOptions)
-	for it.Seek([]byte(wpref)); it.ValidForPrefix([]byte(wpref)); it.Next() {
-		word := strings.SplitN(strings.TrimPrefix(string(it.Item().Key()), wpref), "_", 1)[0]
-		if _, ex := alreadyIncluded[word]; ex {
-			continue
+			revertWordIndex[id] = positions
 		}
-		alreadyIncluded[word] = struct{}{}
-		dictionary = append(dictionary, word)
-	}
-	return dictionary
+		
+		return nil
+	})
 }
