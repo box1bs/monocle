@@ -43,9 +43,9 @@ type webScraper struct {
 	pool           	workerPool
 	idx 			indexer
 	globalCtx		context.Context
-	rlMap	map[string]*rateLimiter
-	rlMu         *sync.RWMutex
-	pageRank 		map[string]float64
+	rlMap			map[string]*rateLimiter
+	//pageRank 		map[string]float64
+	rlMu         	*sync.RWMutex
 	write 			func(string)
 	vectorize		func(string, context.Context) ([][]float64, error)
 }
@@ -54,7 +54,6 @@ type ConfigData struct {
 	StartURLs     	[]string
 	Depth       	int
 	MaxLinksInPage 	int
-	DocNGramCount 	int
 	OnlySameDomain  bool
 }
 
@@ -63,7 +62,6 @@ const sitemap = "sitemap.xml"
 func NewScraper(mp *sync.Map, cfg *ConfigData, wp workerPool, idx indexer, c context.Context, pr map[string]float64, write func(string), vectorize func(string, context.Context) ([][]float64, error)) *webScraper {
 	return &webScraper{
 		client: &http.Client{
-			Timeout: 5 * time.Second,
 			Transport: &http.Transport{
 				IdleConnTimeout:   5 * time.Second,
 				DisableKeepAlives: false,
@@ -76,9 +74,9 @@ func NewScraper(mp *sync.Map, cfg *ConfigData, wp workerPool, idx indexer, c con
 		pool:           wp,
 		idx: 			idx,
 		globalCtx:		c,
-		rlMap: 	make(map[string]*rateLimiter),
+		rlMap: 			make(map[string]*rateLimiter),
+		//pageRank: 		pr,
 		rlMu:           new(sync.RWMutex),
-		pageRank: 		pr,
 		write: 			write,
 		vectorize:		vectorize,
 	}
@@ -163,9 +161,9 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
 
 	if checkContext(ctx) {return}
 	//ws.write(currentURL)
-
+	id := sha256.Sum256([]byte(normalized))
     document := &model.Document{
-        Id: sha256.Sum256([]byte(normalized)),
+        Id: id,
         URL: currentURL.String(),
     }
 
@@ -203,11 +201,11 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
 		return
 	}
 
-	ws.mu.Lock()
-	ws.pageRank[normalized] += 1.0 / float64(len(links))
-	ws.mu.Unlock()
+	//ws.mu.Lock()
+	//ws.pageRank[string(id[:])] += 1.0 / float64(len(links))
+	//ws.mu.Unlock()
 	
-    for _, link := range links {
+	for _, link := range links {
 		if checkContext(ctx) {return}
 
 		if ws.cfg.OnlySameDomain && !link.sameDomain {
@@ -226,11 +224,10 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
 			ws.rlMu.RLock()
 			rl := ws.rlMap[link.link.Host]
 			ws.rlMu.RUnlock()
-        	ws.ScrapeWithContext(c, link.link, rls, rl, depth+1)
-        })
+			ws.ScrapeWithContext(c, link.link, rls, rl, depth+1)
+		})
     }
 }
-
 func (ws *webScraper) haveSitemap(url *url.URL) ([]string, error) {
 	sitemapURL := url.String()
 	if !strings.Contains(sitemapURL, sitemap) {
@@ -407,35 +404,35 @@ func (ws *webScraper) getHTML(ctx context.Context, URL string, rl *rateLimiter) 
     }, 1)
 
 	go func() {
-        var builder strings.Builder
-        scanner := bufio.NewScanner(resp.Body)
-        scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
+		var builder strings.Builder
+		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
 
-        for scanner.Scan() {
-            builder.WriteString(scanner.Text())
-            
-            select {
-            case <-ctx.Done():
-                resultCh <- struct {
-                    content string
-                    err     error
-                }{
-                    content: builder.String(),
-                    err:     ctx.Err(),
-                }
-                return
-            default:
-            }
-        }
+		for scanner.Scan() {
+			builder.WriteString(scanner.Text())
 
-        resultCh <- struct {
-            content string
-            err     error
-        }{
-            content: builder.String(),
-            err:     scanner.Err(),
-        }
-    }()
+			select {
+			case <-ctx.Done():
+				resultCh <- struct {
+					content string
+					err     error
+				}{
+					content: builder.String(),
+					err:     ctx.Err(),
+				}
+				return
+			default:
+			}
+		}
+
+		resultCh <- struct {
+			content string
+			err     error
+		}{
+			content: builder.String(),
+			err:     scanner.Err(),
+		}
+	}()
 
 	r := <- resultCh
     return r.content, r.err

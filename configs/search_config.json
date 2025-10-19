@@ -34,9 +34,9 @@
         "https://venturebeat.com",
         "https://slashdot.org"
     ],
-    "worker_count" : 500,
-    "task_count" : 20000,
+    "worker_count" : 50,
+    "task_count" : 500,
     "max_links_in_page" : 100,
-    "max_depth_crawl" : 6,
+    "max_depth_crawl" : 8,
     "only_same_domain" : false
 }

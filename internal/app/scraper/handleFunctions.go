@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"unicode"
 
 	"golang.org/x/net/html/charset"
 )
@@ -45,14 +44,7 @@ func makeAbsoluteURL(rawURL string, baseURL *url.URL) (string, error) {
 }
 
 func normalizeUrl(rawUrl string) (string, error) {
-	cleanUrl := strings.Map(func(r rune) rune {
-		if unicode.IsSpace(r) || unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, rawUrl)
-
-	uri := urlRegex.ReplaceAllString(cleanUrl, "")
+	uri := urlRegex.ReplaceAllString(strings.TrimSpace(rawUrl), "")
 
 	parsedUrl, err := url.Parse(uri)
 	if err != nil {

@@ -1,14 +1,12 @@
 package repository
 
 import (
+	"encoding/hex"
 	"encoding/json"
-	"strconv"
 	"strings"
 	"sync"
 
 	"fmt"
-
-	"slices"
 
 	"github.com/box1bs/monocle/internal/model"
 	"github.com/dgraph-io/badger/v3"
@@ -87,156 +85,26 @@ func (ir *IndexRepository) LoadPageRank() (map[string]float64, error) {
 	})
 }
 
-const (
-	bgMapKey = "%s:%s:"
-	ugMapKey = "%s:"
-)
-
-func (ir *IndexRepository) GetProbByWord(word ...string) (int, error) {
-	txn := ir.DB.NewTransaction(false)
-	key := []byte(nil)
-	switch len(word) {
-	case 1:
-		key = fmt.Appendf(nil, ugMapKey, word[0])
-
-	case 2:
-		key = fmt.Appendf(nil, bgMapKey, word[0], word[1])
-
-	default:
-		return -1, fmt.Errorf("we dont do this here")
-	}
-	it, err := txn.Get(key)
-	if err != nil {
-		return -1, err
-	}
-
-	count, err := it.ValueCopy(nil)
-	if err != nil {
-		return -1, err
-	}
-
-	return strconv.Atoi(string(count))
-}
-
-func (ir *IndexRepository) SaveUnigramProb(in map[string]int) error {
-	txn := ir.DB.NewTransaction(true)
-	count := 0
-
-	for k, c := range in {
-			it, err := txn.Get(fmt.Appendf(nil, ugMapKey, k))
-			if err != nil {
-				if err == badger.ErrKeyNotFound {
-					if err := txn.Set(fmt.Appendf(nil, ugMapKey, k), fmt.Append(nil, c)); err != nil {
-						return err
-					}
-					count++
-					if count >= batchSize {
-						if err := txn.Commit(); err != nil {
-							return err
-						}
-						txn = ir.DB.NewTransaction(true)
-						count = 0
-					}
-				} else {
-					return err
-				}
-			} else {
-				cnt, err := it.ValueCopy(nil)
-				if err != nil {
-					return err
-				}
-				counter, err := strconv.Atoi(string(cnt))
-				if err != nil {
-					return err
-				}
-				if err := txn.Set(fmt.Appendf(nil, ugMapKey, k), fmt.Append(nil, c + counter)); err != nil {
-					return err
-				}
-				count++
-				if count >= batchSize {
-					if err := txn.Commit(); err != nil {
-						return err
-					}
-					txn = ir.DB.NewTransaction(true)
-					count = 0
-				}
-			}
-	}
-	return txn.Commit()
-}
-
-func (ir *IndexRepository) SaveBigramProb(in map[string]map[string]int) error {
-	txn := ir.DB.NewTransaction(true)
-	count := 0
-
-	for k1, v := range in {
-		for k2, c := range v {
-			it, err := txn.Get(fmt.Appendf(nil, bgMapKey, k1, k2))
-			if err != nil {
-				if err == badger.ErrKeyNotFound {
-					if err := txn.Set(fmt.Appendf(nil, bgMapKey, k1, k2), fmt.Append(nil, c)); err != nil {
-						return err
-					}
-					count++
-					if count >= batchSize {
-						if err := txn.Commit(); err != nil {
-							return err
-						}
-						txn = ir.DB.NewTransaction(true)
-						count = 0
-					}
-				} else {
-					return err
-				}
-			} else {
-				cnt, err := it.ValueCopy(nil)
-				if err != nil {
-					return err
-				}
-				counter, err := strconv.Atoi(string(cnt))
-				if err != nil {
-					return err
-				}
-				if err := txn.Set(fmt.Appendf(nil, bgMapKey, k1, k2), fmt.Append(nil, c + counter)); err != nil {
-					return err
-				}
-				count++
-				if count >= batchSize {
-					if err := txn.Commit(); err != nil {
-						return err
-					}
-					txn = ir.DB.NewTransaction(true)
-					count = 0
-				}
-			}
-		}
-	}
-	return txn.Commit()
-}
-
-func (ir *IndexRepository) IndexDocumentWords(docID [32]byte, sequence []int, positions map[string][]model.Position) error {
-	wordFreq := make(map[int]int)
-	for _, word := range sequence {
-		wordFreq[word]++
-	}
-	encoded, err := json.Marshal(positions)
-	if err != nil {
-		return err
-	}
-
-	const batch = 50
-
+func (ir *IndexRepository) IndexDocumentWords(docID [32]byte, sequence map[string]int, pos map[string][]model.Position) error {
 	current := 0
 	txn := ir.DB.NewTransaction(true)
 
-	for word, freq := range wordFreq {
-		key := fmt.Appendf(nil, WordDocumentKeyFormat, word, docID[:], freq)
-		if err := txn.Set(key, encoded); err != nil {
+	for word, freq := range sequence {
+		key := fmt.Appendf(nil, WordDocumentKeyFormat, word, docID)
+        wcp := model.WordCountAndPositions{
+            Count:     freq,
+            Positions: pos[word],
+        }
+		val, err := json.Marshal(wcp)
+		if err != nil {
+			return err
+		}
+		if err := txn.Set(key, val); err != nil {
 			return err
 		}
 
 		current++
-		if current >= batch {
+		if current >= batchSize {
 			if err := txn.Commit(); err != nil {
 				return err
 			}
@@ -247,38 +115,40 @@ func (ir *IndexRepository) IndexDocumentWords(docID [32]byte, sequence []int, po
 	return txn.Commit()
 }
 
-func (ir *IndexRepository) GetDocumentsByWord(word int) (map[[32]byte]*model.WordCountAndPositions, error) {
-	revertWordIndex := make(map[[32]byte]*model.WordCountAndPositions)
-	wprefix := fmt.Appendf(nil, "%d_", word)
+func (ir *IndexRepository) GetDocumentsByWord(word string) (map[[32]byte]model.WordCountAndPositions, error) {
+	revertWordIndex := make(map[[32]byte]model.WordCountAndPositions)
+	wprefix := fmt.Appendf(nil, "ri:%s_", word)
 	return revertWordIndex, ir.DB.View(func(txn *badger.Txn) error {
-		it1 := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer it1.Close()
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
 		errCh := make(chan error)
 		ir.wg.Add(1)
 		go func() {
 			defer ir.wg.Done()
-			for it1.Seek(wprefix); it1.ValidForPrefix(wprefix); it1.Next() {
-				item := it1.Item()
-				key := string(item.Key())
-				keyPart := strings.TrimPrefix(key, string(wprefix))
-				splited := strings.SplitN(keyPart, "_", 2)
-				if len(splited[0]) != 32 {
-					errCh <- fmt.Errorf("invalid id size: %s", splited[0])
+			for it.Seek(wprefix); it.ValidForPrefix(wprefix); it.Next() {
+				item := it.Item()
+
+				keyPart := item.Key()[len(wprefix):]
+				decoded, err := hex.DecodeString(string(keyPart))
+				if err != nil {
+					errCh <- err
 					return
 				}
-				id := [32]byte([]byte(splited[0]))
+
+				id := [32]byte{}
+				copy(id[:], decoded)
+
 				val, err := item.ValueCopy(nil)
 				if err != nil {
 					errCh <- err
 					return
 				}
-				positions := []model.Position{}
+				positions := model.WordCountAndPositions{}
 				if err := json.Unmarshal(val, &positions); err != nil {
 					errCh <- err
 					return
 				}
-				freq, _ := strconv.Atoi(string(splited[1]))
-				revertWordIndex[id] = &model.WordCountAndPositions{Count: freq, Positions: positions}
+				revertWordIndex[id] = positions
 			}
 		}()
 
@@ -291,84 +161,18 @@ func (ir *IndexRepository) GetDocumentsByWord(word int) (map[[32]byte]*model.Wor
 	})
 }
 
-func (ir *IndexRepository) IndexNGrams(word string, nGrams ...string) error {
-	current := 0
-
-	txn := ir.DB.NewTransaction(true)
-	defer txn.Discard()
-
-	for _, nGram := range nGrams {
-		key := fmt.Appendf(nil, "ngram:%s", string(nGram))
-		item, err := txn.Get(key)
-
-		if err == badger.ErrKeyNotFound {
-			if err = txn.Set(key, []byte(word)); err != nil {
-				return err
-			}
-			continue
-		} else if err != nil {
-			return err
-		}
-
-		val, err := item.ValueCopy(nil)
-		if err != nil {
-			return err
-		}
-		words := strings.Split(string(val), ",")
-		if slices.Contains(words, nGram) {
+func (ir *IndexRepository) GetAllWords() []string {
+	dictionary := []string{}
+	wpref := "ri:"
+	alreadyIncluded := map[string]struct{}{}
+	it := ir.DB.NewTransaction(false).NewIterator(badger.DefaultIteratorOptions)
+	for it.Seek([]byte(wpref)); it.ValidForPrefix([]byte(wpref)); it.Next() {
+		word := strings.SplitN(strings.TrimPrefix(string(it.Item().Key()), wpref), "_", 1)[0]
+		if _, ex := alreadyIncluded[word]; ex {
 			continue
 		}
-		words = append(words, word)
-		byteVal := []byte(strings.Join(words, ","))
-		if err = txn.Set(key, byteVal); err != nil {
-			return err
-		}
-
-		current++
-		if current >= batchSize {
-			if err := txn.Commit(); err != nil {
-				return err
-			}
-			txn = ir.DB.NewTransaction(true)
-			current = 0
-		}
+		alreadyIncluded[word] = struct{}{}
+		dictionary = append(dictionary, word)
 	}
-
-	return txn.Commit()
-}
-
-func (ir *IndexRepository) GetWordsByNGrams(nGrams ...string) ([]string, error) {
-	wordSet := make(map[string]struct{})
-	err := ir.DB.View(func(txn *badger.Txn) error {
-		for _, nGram := range nGrams {
-			key := fmt.Sprintf("ngram:%s", nGram)
-			item, err := txn.Get([]byte(key))
-			if err == badger.ErrKeyNotFound {
-				continue
-			} else if err != nil {
-				return err
-			}
-			val, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-			words := strings.SplitSeq(string(val), ",")
-			for word := range words {
-				if _, exists := wordSet[word]; exists {
-					continue
-				}
-				wordSet[word] = struct{}{}
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	words := make([]string, 0, len(wordSet))
-	for word := range wordSet {
-		words = append(words, word)
-	}
-	return words, nil
+	return dictionary
 }

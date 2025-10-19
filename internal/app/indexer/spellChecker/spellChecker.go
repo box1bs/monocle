@@ -3,13 +3,11 @@ package spellChecker
 //Использование триграмм отнимает слишком много оперативной памяти
 type SpellChecker struct {
 	maxTypo     int
-    nGramCount  int
 }
 
-func NewSpellChecker(maxTypoLen, nGramCount int) *SpellChecker {
+func NewSpellChecker(maxTypoLen int) *SpellChecker {
 	return &SpellChecker{
 		maxTypo: maxTypoLen,
-        nGramCount: nGramCount,
 	}
 }
 
@@ -18,14 +16,18 @@ type token struct {
     score   int
 }
 
-func (s *SpellChecker) BestReplacement(s1 string, wordsBefore string, candidates []string, f func(...string) (int, error)) string {
+func (s *SpellChecker) BestReplacement(s1 string, candidates []string) string {
     if len(candidates) == 0 {
         return s1
     }
 
     st := []token{}
+    orig := []rune(s1)
 	for _, candidate := range candidates {
-		distance := s.levenshteinDistance(s1, candidate)
+		distance := s.levenshteinDistance(orig, []rune(candidate))
+        if distance <= s.maxTypo {
+            return candidate
+        }
 		if len(st) == 0 || distance <= st[len(st) - 1].score {
             st = append(st, token{
                 s: candidate,
@@ -39,21 +41,10 @@ func (s *SpellChecker) BestReplacement(s1 string, wordsBefore string, candidates
         return s1
     }
 
-    scores := s.markovChains(wordsBefore, st, f)
-    bestScore := 0.0
-    bestChoise := ""
-
-    for i := range stackLen {
-        if score := scores[i] / float64(1 + st[i].score); score > bestScore {
-            bestScore = score
-            bestChoise = st[i].s
-        }
-    }
-    
-    return bestChoise
+    return st[stackLen - 1].s
 }
 
-func (s *SpellChecker) levenshteinDistance(word1 string, word2 string) int {
+func (s *SpellChecker) levenshteinDistance(word1 []rune, word2 []rune) int {
     w1, w2 := len(word1), len(word2)
     if w1 - w2 > s.maxTypo || w2 - w1 > s.maxTypo {
         return s.maxTypo + 1
@@ -84,51 +75,4 @@ func (s *SpellChecker) levenshteinDistance(word1 string, word2 string) int {
     }
 
     return dp[w1][w2]
-}
-
-func (s *SpellChecker) BreakToNGrams(word string) []string {
-    runes := []rune(word)
-    if len(runes) < s.nGramCount {
-        return nil
-    }
-    nGrams := make([]string, 0, len(runes) - s.nGramCount + 1)
-    for i := range len(runes) - s.nGramCount + 1 {
-        nGram := make([]rune, s.nGramCount)
-        copy(nGram, runes[i:i + s.nGramCount])
-        nGrams = append(nGrams, string(nGram))
-    }
-    return nGrams
-}
-
-func (s *SpellChecker) markovChains(prev string, condidates []token, f func(...string) (int, error)) []float64 {
-    out := make([]float64, len(condidates))
-    total := 0
-    if prev == "" {
-        cnts := []int{}
-        for _, t := range condidates {
-            c, err := f(t.s)
-            if err != nil {
-                return nil
-            }
-            total += c
-            cnts = append(cnts, c)
-        }
-        for i, c := range condidates {
-            out[i] = float64(cnts[i] + 1) / float64(total) / float64(1 + c.score)
-        }
-    } else {
-        cnts := []int{}
-        for _, t := range condidates {
-            c, err := f(prev, t.s)
-            if err != nil {
-                return nil
-            }
-            total += c
-            cnts = append(cnts, c)
-        }
-        for i, c := range condidates {
-            out[i] = float64(cnts[i] + 1) / float64(total) / float64(1 + c.score)
-        }
-    }
-    return out
 }

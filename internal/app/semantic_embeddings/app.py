@@ -23,6 +23,18 @@ class X_data:
         self.query_dencity = query_dencity
         self.term_proximity = term_proximity
 
+    @classmethod
+    def from_dict(cls, d: dict):
+        return cls(
+            cos=d.get("cos", 0.0),
+            euclid_dist=d.get("euclid_dist", 0.0),
+            sum_token_in_package=d.get("sum_token_in_package", 0),
+            words_in_header=d.get("words_in_header", 0),
+            query_coverage=d.get("query_coverage", 0.0),
+            query_dencity=d.get("query_dencity", 0.0),
+            term_proximity=d.get("term_proximity", 0),
+        )
+
 class Document:
     def __init__(self, text: str):
         self.text = text
@@ -70,11 +82,28 @@ def get_embeddings():
 def get_ranked():
     request_data = request.get_json()
     x_data = []
-    for entry in json.load(request_data):
-        x_data.append(X_data(entry))
+    for entry in request_data:
+        print(entry)
+        x_data.append(X_data.from_dict(entry))
+        
+    features = []
+    for d in x_data:
+        features.append([
+            d.cos,
+            d.euclid_dist,
+            d.sum_token_in_package,
+            d.words_in_header,
+            d.query_coverage,
+            d.query_dencity,
+            d.term_proximity,
+        ])
 
-    resp = lr_model.predict(np.array(x_data))
-    return jsonify({'rel': resp.tolist()})
+    try:
+        resp = lr_model.predict(np.array(features, dtype=float))
+    except Exception as e:
+        return jsonify({'error': f'prediction error: {e}'}), 500
+
+    return jsonify({'rel': np.asarray(resp).tolist()})
 
 
 # Run the Flask app

@@ -17,11 +17,11 @@ import (
 )
 
 type index interface {
-	GetDocumentsByWord(int) (map[[32]byte]*model.WordCountAndPositions, error)
+	GetDocumentsByWord(string) (map[[32]byte]model.WordCountAndPositions, error)
 	GetDocumentsCount() (int, error)
 	GetDocumentByID([32]byte) (*model.Document, error)
 	GetAVGLen() (float64, error)
-	HandleTextQuery(string) ([]int, error)
+	HandleTextQuery(string) ([]string, []map[[32]byte]model.WordCountAndPositions, error)
 }
 
 type vectorizer interface {
@@ -43,15 +43,15 @@ func NewSearcher(idx index, vec vectorizer) *Searcher {
 }
 
 type requestRanking struct {
-	tf_idf 			float64		`json:"-"`
-	bm25 			float64		`json:"-"`
-	WordsCos		float64		`json:"cos"`
-	Dpq				float64		`json:"euclid_dist"`
-	QueryCoverage	float64		`json:"query_coverage"`
-	QueryDencity 	float64		`json:"query_dencity"`
-	TermProximity 	int			`json:"term_proximity"`
-	IncludesWords 	int			`json:"sum_token_in_package"`
-	HasWordInHeader bool		`json:"words_in_header"`
+	tf_idf 				float64		`json:"-"`
+	bm25 				float64		`json:"-"`
+	WordsCos			float64		`json:"cos"`
+	Dpq					float64		`json:"euclid_dist"`
+	QueryCoverage		float64		`json:"query_coverage"`
+	QueryDencity 		float64		`json:"query_dencity"`
+	TermProximity 		int			`json:"term_proximity"`
+	SumTokenInPackage 	int			`json:"sum_token_in_package"`
+	HasWordInHeader 	bool		`json:"words_in_header"`
 	//any ranking scores
 }
 
@@ -61,20 +61,13 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 	
 	rank := make(map[[32]byte]requestRanking)
 
-	terms, err := s.idx.HandleTextQuery(query)
+	words, index, err := s.idx.HandleTextQuery(query)
 	if err != nil {
 		log.Println(err)
 		return nil
 	}
-	index := make(map[int]map[[32]byte]*model.WordCountAndPositions)
-	for i := range terms {
-		mp, err := s.idx.GetDocumentsByWord(terms[i])
-		if err != nil {
-			log.Println(err)
-			return nil
-		}
-		index[terms[i]] = mp
-	}
+
+	queryLen := len(words)
 
 	avgLen, err := s.idx.GetAVGLen()
 	if err != nil {
@@ -88,7 +81,6 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 		return nil
 	}
 
-	queryLen := len(terms)
 	result := make([]*model.Document, 0)
 	alreadyIncluded := make(map[[32]byte]struct{})
 	var wg sync.WaitGroup
@@ -96,15 +88,15 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 	var resultMu sync.Mutex
 	done := make(chan struct{})
 
-	for _, term := range terms {
+	for i := range words {
 		wg.Add(1)
-		go func(term int) {
+		go func(i int) {
 			defer wg.Done()
 	
-			idf := math.Log(float64(length) / float64(len(index[term]) + 1)) + 1.0
-			log.Printf("len documents with word: %d, %d", term, len(index[term]))
+			idf := math.Log(float64(length) / float64(len(index[i]) + 1)) + 1.0
+			//log.Printf("len documents with word: %s, %d", word, len(index[i]))
 	
-			for docID, item := range index[term] {
+			for docID, item := range index[i] {
 				doc, err := s.idx.GetDocumentByID(docID)
 				if err != nil || doc == nil {
 					log.Printf("error: %v, doc: %v", err, doc)
@@ -116,22 +108,24 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 				if !ex {
 					rank[docID] = requestRanking{}
 				}
-				r.IncludesWords += item.Count
+				r.SumTokenInPackage += item.Count
 				r.tf_idf += float64(doc.WordCount) * idf
 				r.bm25 += culcBM25(idf, float64(item.Count), doc, avgLen)
-
 				positions := []*[]model.Position{}
-				coverage := 0.0
-				for _, term := range terms {
-					positions = append(positions, &item.Positions)
-					if len(index[term][docID].Positions) > 0 {
-						coverage++
+				if r.TermProximity == 0 {
+					coverage := 0.0
+					docLen := 0.0
+					for i := range words {
+						positions = append(positions, &item.Positions)
+						if l := len(index[i][docID].Positions); l > 0 {
+							coverage++
+							docLen += float64(l)
+						}
 					}
+					r.TermProximity = calcQueryDencity(positions, queryLen)
+					r.QueryDencity = coverage / docLen
+					r.QueryCoverage = coverage / float64(queryLen)
 				}
-				r.TermProximity += calcQueryDencity(positions, queryLen)
-				r.QueryDencity += coverage / float64(len(item.Positions))
-				r.QueryCoverage += coverage / float64(queryLen)
-
 				if !r.HasWordInHeader {
 					for i := 0; i < item.Count && !r.HasWordInHeader; i++ {
 						r.HasWordInHeader = item.Positions[i].Type == 'h'
@@ -146,11 +140,10 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 					continue
 				}
 				alreadyIncluded[doc.Id] = struct{}{}
-				log.Println("appended")
 				result = append(result, doc)
 				resultMu.Unlock()
 			}
-		}(term)
+		}(i)
 	}
 	
 	go func() {
@@ -161,12 +154,12 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 	c, cancel := context.WithTimeout(context.Background(), 5 * time.Second)
 	defer cancel()
 	vec, err := s.vectorizer.Vectorize(query, c)
-	if err != nil || len(vec) == 0 {
+	if err != nil {
 		log.Printf("error vectorozing query with error: %v", err)
 		return nil
 	}
 
-	log.Printf("result len: %d", len(result))
+	//log.Printf("result len: %d", len(result))
 	
 	<- done
 	
@@ -204,9 +197,6 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 		if rank[filteredResult[i].Id].bm25 != rank[filteredResult[j].Id].bm25 {
 			return rank[filteredResult[i].Id].bm25 > rank[filteredResult[j].Id].bm25
 		}
-		if rank[filteredResult[i].Id].IncludesWords != rank[filteredResult[j].Id].IncludesWords {
-			return rank[filteredResult[i].Id].IncludesWords > rank[filteredResult[j].Id].IncludesWords
-		}
 		if rank[filteredResult[i].Id].TermProximity != rank[filteredResult[j].Id].TermProximity {
 			return rank[filteredResult[i].Id].TermProximity > rank[filteredResult[j].Id].TermProximity
 		}
@@ -226,7 +216,6 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 		}
 		bestPos, err := callRankAPI(list, condidates)
 		if err != nil {
-			//panic(err)
 			return fl
 		}
 		fl[i * 10 + bestPos], fl[i] = fl[i], fl[i * 10 + bestPos]
@@ -241,7 +230,6 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 		}
 		bestPos, err := callRankAPI(list, condidates)
 		if err != nil {
-			//panic(err)
 			return fl
 		}
 		fl[n / 10 * 10 + bestPos], fl[n / 10] = fl[n / 10], fl[n / 10 * 10 + bestPos]
@@ -293,28 +281,38 @@ func culcBM25(idf float64, tf float64, doc *model.Document, avgLen float64) floa
 func calcQueryDencity(positions []*[]model.Position, lenQuery int) int {
 	minDencity := math.MaxInt
 
-	bs := func(cur, target, l, r int) int {
+	bs := func(cur, target int) int {
+		arr := *positions[cur]
+		l, r := 0, len(arr)
 		for l < r {
 			m := (l + r) / 2
-			if (*positions[cur])[m].I <= target {
+			if arr[m].I <= target {
 				l = m + 1
-			}
-			if (*positions[cur])[m].I > target {
+			} else {
 				r = m
 			}
 		}
 		return l
 	}
 
-	for i := range *positions[0] {
-		cur := (*positions[0])[i].I
+	for _, startPos := range *positions[0] {
+		cur := startPos.I
 		last := cur
-		for j := range lenQuery {
-			position := bs(i, last, 0, len(*positions[j]))
-			if position == len(*positions[j]) {
-				return minDencity
+		valid := true
+		for j := 1; j < lenQuery; j++ {
+			arr := *positions[j]
+			if len(arr) == 0 {
+				return minDencity //minDencity не успеет измениться до возврата
 			}
-			last = position
+			position := bs(j, last)
+			if position >= len(arr) {
+				valid = false
+				break
+			}
+			last = arr[position].I
+		}
+		if !valid || last - cur < 0 {
+			continue
 		}
 		minDencity = min(minDencity, last - cur)
 	}
@@ -353,7 +351,7 @@ func callRankAPI(conds [][32]byte, features map[[32]byte]requestRanking) (int, e
 		return 0, fmt.Errorf("failed to decode response body: %w", err)
 	}
 
-	for i := 0; i < len(respData.Relevances); i++ {
+	for i := range respData.Relevances {
 		if respData.Relevances[i] > 0.0 {
 			return i, nil
 		}

@@ -12,32 +12,48 @@ import (
 )
 
 const (
-    DocumentKeyPrefix = "doc/?&/"
-    WordDocumentKeyFormat = "%d_%s_%d"
+	DocumentKeyPrefix     = "doc/?&/"
+	WordDocumentKeyFormat = "ri:%s_%x"
 )
 
+type payload struct {
+	Id        []byte      `json:"id"`
+	URL       string      `json:"url"`
+	WordCount int         `json:"words_count"`
+	Vec       [][]float64 `json:"word_vec"`
+}
+
 func (ir *IndexRepository) documentToBytes(doc *model.Document) ([]byte, error) {
-	return json.Marshal(doc)
+	p := payload{
+		Id:        doc.Id[:],
+		URL:       doc.URL,
+		WordCount: doc.WordCount,
+		Vec:       doc.WordVec,
+	}
+	return json.Marshal(p)
 }
 
 func (ir *IndexRepository) bytesToDocument(body []byte) (*model.Document, error) {
-	var payload struct {
-		Id 				[]byte 		`json:"id"`
-		URL 			string 		`json:"url"`
-		WordCount 		int 		`json:"words_count"`
-		Vec				[][]float64 `json:"word_vec"`
+	p := payload{}
+
+	if err := json.Unmarshal(body, &p); err != nil {
+		return nil, err
 	}
-	err := json.Unmarshal(body, &payload)
-	if err != nil {
-		panic(body)
+
+	if len(p.Id) != 32 {
+		return nil, fmt.Errorf("invalid id length: %d", len(p.Id))
 	}
+
+	var idArr [32]byte
+	copy(idArr[:], p.Id)
+
 	doc := &model.Document{
-		Id: [32]byte(payload.Id),
-		URL: payload.URL,
-		WordCount: payload.WordCount,
-		WordVec: payload.Vec,
+		Id:        idArr,
+		URL:       p.URL,
+		WordCount: p.WordCount,
+		WordVec:   p.Vec,
 	}
-	return doc, err
+	return doc, nil
 }
 
 func (ir *IndexRepository) SaveDocument(doc *model.Document) error {
@@ -77,66 +93,66 @@ func (ir *IndexRepository) GetDocumentByID(docID [32]byte) (*model.Document, err
 
 func (ir *IndexRepository) GetAllDocuments() ([]*model.Document, error) {
 	var documents []*model.Document
-	
+
 	err := ir.DB.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 10
 		it := txn.NewIterator(opts)
 		defer it.Close()
-		
+
 		for it.Seek([]byte(DocumentKeyPrefix)); it.ValidForPrefix([]byte(DocumentKeyPrefix)); it.Next() {
 			item := it.Item()
 			var docBytes []byte
-			
+
 			err := item.Value(func(val []byte) error {
 				docBytes = slices.Clone(val)
 				return nil
 			})
-			
+
 			if err != nil {
 				return err
 			}
-			
+
 			doc, err := ir.bytesToDocument(docBytes)
 			if err != nil {
 				return err
 			}
-			
+
 			documents = append(documents, doc)
 		}
-		
+
 		return nil
 	})
-	
+
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return documents, nil
 }
 
 func (ir *IndexRepository) GetDocumentsCount() (int, error) {
 	var count int
-	
+
 	err := ir.DB.View(func(txn *badger.Txn) error {
 		docPrefix := []byte(DocumentKeyPrefix)
-		
+
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = false
 		it := txn.NewIterator(opts)
 		defer it.Close()
-		
+
 		for it.Seek(docPrefix); it.ValidForPrefix(docPrefix); it.Next() {
 			count++
 		}
-		
+
 		return nil
 	})
-	
+
 	if err != nil {
 		return 0, err
 	}
-	
+
 	return count, nil
 }
 
@@ -156,7 +172,7 @@ func (ir *IndexRepository) CheckContent(id [32]byte, hash [32]byte) (bool, *mode
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
-		if it.Seek(pref); it.ValidForPrefix(pref){
+		if it.Seek(pref); it.ValidForPrefix(pref) {
 			item := it.Item()
 			k := item.Key()
 			doc, err = ir.GetDocumentByID([32]byte(k[33:]))

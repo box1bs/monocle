@@ -62,7 +62,7 @@ func main() {
 	}()
 
 	vec := textHandling.NewVectorizer()
-	i, err := indexer.NewIndexer(ir, vec, logger, 2, 3)
+	i, err := indexer.NewIndexer(ir, vec, logger, 2)
 	if err != nil {
 		panic(err)
 	}

@@ -18,17 +18,13 @@ import (
 type repository interface {
 	LoadVisitedUrls(*sync.Map) error
 	SaveVisitedUrls(*sync.Map) error
-	IndexDocumentWords([32]byte, []int, map[string][]model.Position) error
-	GetDocumentsByWord(int) (map[[32]byte]*model.WordCountAndPositions, error)
-	//IndexNGrams(string, ...string) error
-	//GetWordsByNGrams(...string) ([]string, error)
 	
 	SavePageRank(map[string]float64) error
 	LoadPageRank() (map[string]float64, error)
 
-	GetProbByWord(...string) (int, error)
-	SaveUnigramProb(map[string]int) error
-	SaveBigramProb(map[string]map[string]int) error
+	IndexDocumentWords([32]byte, map[string]int, map[string][]model.Position) error
+	GetDocumentsByWord(string) (map[[32]byte]model.WordCountAndPositions, error)
+	GetAllWords() []string
 
 	SaveDocument(*model.Document) error
 	GetDocumentByID([32]byte) (*model.Document, error)
@@ -36,9 +32,6 @@ type repository interface {
 	GetDocumentsCount() (int, error)
 
 	CheckContent([32]byte, [32]byte) (bool, *model.Document, error)
-	
-	TransferToSequence(...string) ([]int, error)
-	SaveToSequence(...string) ([]int, error)
 }
 
 type logger interface {
@@ -58,10 +51,10 @@ type indexer struct {
 	logger 		logger
 }
 
-func NewIndexer(repo repository, vec vectorizer, logger logger, maxTypo, nGramCount int) (*indexer, error) {
+func NewIndexer(repo repository, vec vectorizer, logger logger, maxTypo int) (*indexer, error) {
 	return &indexer{
 		stemmer:   	textHandling.NewEnglishStemmer(),
-		sc:        	spellChecker.NewSpellChecker(maxTypo, nGramCount),
+		sc:        	spellChecker.NewSpellChecker(maxTypo),
 		mu: new(sync.RWMutex),
 		repository: repo,
 		vectorizer: vec,
@@ -74,7 +67,7 @@ func (idx *indexer) Index(config *configs.ConfigData, global context.Context) {
 	idx.repository.LoadVisitedUrls(vis)
 	defer idx.repository.SaveVisitedUrls(vis)
 	
-	wp := workerPool.NewWorkerPool(config.WorkersCount, config.TasksCount)
+	wp := workerPool.NewWorkerPool(config.WorkersCount, config.TasksCount, global)
 	
 	pr, err := idx.repository.LoadPageRank()
 	defer idx.repository.SavePageRank(pr)
@@ -88,65 +81,35 @@ func (idx *indexer) Index(config *configs.ConfigData, global context.Context) {
 		Depth:       	config.MaxDepth,
 		MaxLinksInPage: config.MaxLinksInPage,
 		OnlySameDomain: config.OnlySameDomain,
-		DocNGramCount: 	64,
 	}, wp, idx, global, pr, idx.logger.Write, idx.vectorizer.Vectorize).Run()
 }
 
 func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Passage) error {
-	var i = 0
-	var sequence []int
-	positions := map[string][]model.Position{}
+	stem := map[string]int{}
+	i := 0
+	pos := map[string][]model.Position{}
 
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
 	for _, passage := range passages {
-		words, stemmed, err := idx.stemmer.TokenizeAndStem(passage.Text)
+		_, stemmed, err := idx.stemmer.TokenizeAndStem(passage.Text)
 		if err != nil {
 			return err
 		}
-		if len(stemmed) == 0 || len(words) == 0 {
+		if len(stemmed) == 0 {
 			continue
 		}
+		doc.WordCount += len(stemmed)
 
-		wl := len(words)
-		bg := map[string]map[string]int{}
-		ug := map[string]int{}
-		for i := range wl {
-			if i + 1 < wl {
-				if _, ok := bg[words[i]]; !ok {
-					bg[words[i]] = map[string]int{}
-				}
-				bg[words[i]][words[i + 1]]++
-			}
-			ug[words[i]]++
-			//if err := idx.repository.IndexNGrams(words[i], idx.sc.BreakToNGrams(words[i])...); err != nil {
-			//	return err
-			//}
-		}
-
-		if err := idx.repository.SaveBigramProb(bg); err != nil {
-			return err
-		}
-		if err := idx.repository.SaveUnigramProb(ug); err != nil {
-			return err
-		}
-
-		s, err := idx.repository.SaveToSequence(stemmed...)
-		if err != nil {
-			log.Printf("error saving to sequence: %v", err)
-			return err
-		}
-		sequence = append(sequence, s...)
-
-		doc.WordCount += len(s)
-		for _, word := range stemmed {
-			positions[word] = append(positions[word], model.NewTypeTextObj[model.Position](passage.Type, "", i))
+		for _, w := range stemmed {
+			stem[w]++
+			pos[w] = append(pos[w], model.NewTypeTextObj[model.Position](passage.Type, "", i))
 			i++
 		}
 	}
 	
-	if err := idx.repository.IndexDocumentWords(doc.Id, sequence, positions); err != nil {
+	if err := idx.repository.IndexDocumentWords(doc.Id, stem, pos); err != nil {
 		log.Printf("error indexing words: %v", err)
 		return err
 	}
@@ -158,48 +121,34 @@ func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Pa
 	return nil
 }
 
-func (idx *indexer) HandleTextQuery(text string) ([]int, error) {
+func (idx *indexer) HandleTextQuery(text string) ([]string, []map[[32]byte]model.WordCountAndPositions, error) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-
+	reverthIndex := []map[[32]byte]model.WordCountAndPositions{}
 	_, stemmed, err := idx.stemmer.TokenizeAndStem(text)
-	if err != nil {
-		return nil, err
-	}
 
-	log.Println(stemmed)
-
-	sequence, err := idx.repository.TransferToSequence(stemmed...)
-	if err != nil {
-		return nil, err
-	}
-	/*
-	for i, word := range sequence {
-		if word == -1 {
-			condidates, err := idx.repository.GetWordsByNGrams(idx.sc.BreakToNGrams(words[i])...)
-			if err != nil || len(condidates) == 0 {
-				continue
-			}
-
-			log.Printf("word: %s, has %d code", words[i], sequence[i])
-
-			before := ""
-			if i > 0 {
-				before = words[i - 1]
-			}
-			_, stemmedReplacement, err := idx.stemmer.TokenizeAndStem(idx.sc.BestReplacement(words[i], before, condidates, idx.repository.GetProbByWord))
-			if err != nil || len(stemmedReplacement) == 0 {
-				continue
-			}
-			replacementSeq, err := idx.repository.TransferToSequence(stemmedReplacement[0])
-			if err != nil || len(replacementSeq) == 0 || replacementSeq[0] == -1 {
-				continue
-			}
-			sequence[i] = replacementSeq[0]
+	for i, lemma := range stemmed {
+		documents, err := idx.repository.GetDocumentsByWord(lemma)
+		if err != nil {
+			return nil, nil, err
 		}
+		if len(documents) == 0 {
+			replacement := idx.sc.BestReplacement(stemmed[i], idx.repository.GetAllWords())
+			log.Printf("%s has no documents, was replaced by: %s", stemmed[i], replacement)
+			//_, stem, err := idx.stemmer.TokenizeAndStem(replacement)
+			//if err != nil {
+			//	return nil, nil, err
+			//}
+			stemmed[i] = replacement
+			documents, err = idx.repository.GetDocumentsByWord(replacement)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		reverthIndex = append(reverthIndex, documents)
 	}
-	*/
-	return sequence, nil
+
+	return stemmed, reverthIndex, err
 }
 
 func (idx *indexer) GetAVGLen() (float64, error) {
@@ -264,7 +213,7 @@ func (idx *indexer) GetDocumentsCount() (int, error) {
 	return idx.repository.GetDocumentsCount()
 }
 
-func (idx *indexer) GetDocumentsByWord(word int) (map[[32]byte]*model.WordCountAndPositions, error) {
+func (idx *indexer) GetDocumentsByWord(word string) (map[[32]byte]model.WordCountAndPositions, error) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
