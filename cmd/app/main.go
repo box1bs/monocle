@@ -17,49 +17,44 @@ import (
 	"github.com/box1bs/monocle/internal/model"
 	"github.com/box1bs/monocle/internal/repository"
 	"github.com/box1bs/monocle/pkg/logger"
-	"github.com/joho/godotenv"
 )
 
 func main() {
 	var (
-		configFile = flag.String("config", "configs/search_config.json", "Path to configuration file")
+		configFile = flag.String("config", "configs/app_config.json", "Path to configuration file")
 	)
 	flag.Parse()
-
-	if err := godotenv.Load(); err != nil {
-		panic(err)
-	}
-
-	infoPath := os.Getenv("INFO_LOG_PATH")
-	iFile, err := os.OpenFile(infoPath, os.O_WRONLY, 0644)
-	if err != nil {
-		panic(err)
-	}
-	defer iFile.Close()
-
-	errorPath := os.Getenv("ERROR_LOG_PATH")
-	erFile, err := os.OpenFile(errorPath, os.O_WRONLY, 0644)
-	if err != nil {
-		panic(err)
-	}
-	defer erFile.Close()
-
-	logger, err := logger.NewAsyncLogger(iFile, erFile)
-	if err != nil {
-		panic(err)
-	}
-	defer logger.Close()
-
-	ir, err := repository.NewIndexRepository("index/badger", logger, 10 * 1024 * 1024)
-	if err != nil {
-		panic(err)
-	}
-	defer ir.DB.Close()
 
 	cfg, err := configs.UploadLocalConfiguration(*configFile)
 	if err != nil {
 		panic(err)
 	}
+
+	in := os.Stdout
+	er := os.Stderr
+	if cfg.InfoLogPath != "-" {
+		in, err = os.OpenFile(cfg.InfoLogPath, os.O_WRONLY, 0644)
+		if err != nil {
+			panic(err)
+		}
+	}
+	if cfg.ErrorLogPath != "-" {
+		er, err = os.OpenFile(cfg.ErrorLogPath, os.O_WRONLY, 0644)
+		if err != nil {
+			panic(err)
+		}
+	}
+	defer in.Close()
+	defer er.Close()
+
+	log := logger.NewLogger(in, er, cfg.LogChannelSize)
+	defer log.Close()
+
+	ir, err := repository.NewIndexRepository("index/badger", log, cfg.MaxTransactionBytes)
+	if err != nil {
+		panic(err)
+	}
+	defer ir.DB.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -74,7 +69,7 @@ func main() {
 	}()
 
 	vec := textHandling.NewVectorizer()
-	i, err := indexer.NewIndexer(ir, vec, logger, 2, 3)
+	i, err := indexer.NewIndexer(ir, vec, log)
 	if err != nil {
 		panic(err)
 	}
@@ -85,9 +80,10 @@ func main() {
 		panic(err)
 	}
 
+	log.Write(logger.NewMessage(logger.MAIN_LAYER, logger.INFO, "index built with %d documents", count))
 	fmt.Printf("Index built with %d documents. Enter search queries (Ctrl+C to exit):\n", count)
 
-	s := searcher.NewSearcher(i, vec)
+	s := searcher.NewSearcher(log, i, vec)
 
 	reader := bufio.NewReader(os.Stdin)
 	for {

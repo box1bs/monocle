@@ -1,17 +1,18 @@
 import torch
-import json
 import numpy as np
 from flask import Flask, request, jsonify
 from transformers import BertConfig, BertModel, BertTokenizer
 
 app = Flask(__name__)
 
-config = BertConfig.from_json_file('model/config.json')
-bert = BertModel.from_pretrained('model', config=config)
-tokenizer = BertTokenizer.from_pretrained('model/vocab.txt', do_lower_case=True)
+MODEL_DIR = 'model'
+RANKING_MODEL_PATH = 'ranking_model/LTRtinyBertL2H128.pt'
 
-lr_model = torch.load('ranking_model/LTRtinyBertL2H128.pt', weights_only=False)
-print("модель линейной регрессии загружена")
+config = BertConfig.from_json_file(f'{MODEL_DIR}/config.json')
+bert = BertModel.from_pretrained(MODEL_DIR, config=config)
+tokenizer = BertTokenizer.from_pretrained(f'{MODEL_DIR}/vocab.txt', do_lower_case=True)
+
+lr_model = torch.load(RANKING_MODEL_PATH, weights_only=False)
 
 class X_data:
     def __init__(self, cos, euclid_dist, sum_token_in_package, words_in_header, query_coverage, query_dencity, term_proximity):
@@ -24,8 +25,8 @@ class X_data:
         self.term_proximity = term_proximity
 
     @classmethod
-    def from_dict(cls, d: dict):
-        return cls(
+    def from_dict(self, d: dict):
+        return self(
             cos=d.get("cos", 0.0),
             euclid_dist=d.get("euclid_dist", 0.0),
             sum_token_in_package=d.get("sum_token_in_package", 0),
@@ -81,21 +82,18 @@ def get_embeddings():
 @app.route('/rank', methods=['POST'])
 def get_ranked():
     request_data = request.get_json()
-    x_data = []
+    features = []
     for entry in request_data:
         print(entry)
-        x_data.append(X_data.from_dict(entry))
-        
-    features = []
-    for d in x_data:
+        x = X_data.from_dict(entry)
         features.append([
-            d.cos,
-            d.euclid_dist,
-            d.sum_token_in_package,
-            d.words_in_header,
-            d.query_coverage,
-            d.query_dencity,
-            d.term_proximity,
+            x.cos,
+            x.euclid_dist,
+            x.sum_token_in_package,
+            x.words_in_header,
+            x.query_coverage,
+            x.query_dencity,
+            x.term_proximity,
         ])
 
     try:
@@ -105,7 +103,5 @@ def get_ranked():
 
     return jsonify({'rel': np.asarray(resp).tolist()})
 
-
-# Run the Flask app
 if __name__ == '__main__':
     app.run(debug=True, port=50920)

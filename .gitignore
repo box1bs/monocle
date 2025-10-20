@@ -12,8 +12,7 @@ internal/view/node_modules/
 internal/view/.vercel
 internal/view/.env.local
 internal/view/next-env.d.ts
-logs/*.txt
-
+logs
 
 main.exe
 

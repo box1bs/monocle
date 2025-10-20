@@ -2,13 +2,15 @@ package workerPool
 
 import (
 	"context"
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/box1bs/monocle/pkg/logger"
 )
 
 type WorkerPool struct {
+	log 		*logger.Logger
 	buf 		chan func()
 	quit      	chan struct{}
 	wg        	*sync.WaitGroup
@@ -16,8 +18,9 @@ type WorkerPool struct {
 	workers   	int32
 }
 
-func NewWorkerPool(size int, queueCapacity int, c context.Context) *WorkerPool {
+func NewWorkerPool(size int, queueCapacity int, c context.Context, l *logger.Logger) *WorkerPool {
 	wp := &WorkerPool{
+		log:       	l,
 		buf: 		make(chan func(), queueCapacity),
 		wg:        	new(sync.WaitGroup),
 		quit:      	make(chan struct{}),
@@ -55,7 +58,7 @@ func (wp *WorkerPool) cleanCalls() {
 
 func (wp *WorkerPool) Submit(task func()) {
 	wp.wg.Add(1)
-	log.Printf("Submitting task. Buffer: %d, Workers: %d", len(wp.buf), wp.workers) //заменить на локальный DEBUG тип
+	wp.log.Write(logger.NewMessage(logger.WORKER_POOL_LAYER, logger.DEBUG, "Submitting task. Buffer: %d, Workers: %d", len(wp.buf), wp.workers))
 
 	wrap := func() {
 		task()

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"log"
 	"sync"
 
 	"github.com/box1bs/monocle/configs"
@@ -47,15 +46,15 @@ type indexer struct {
 	sc 			*spellChecker.SpellChecker
 	logger 		*logger.Logger
 	mu 			*sync.RWMutex
+	pageRank 	map[string]float64
 	repository 	repository
 	vectorizer 	vectorizer
 }
 
-func NewIndexer(repo repository, vec vectorizer, logger *logger.Logger, maxTypo, ngc int) (*indexer, error) {
+func NewIndexer(repo repository, vec vectorizer, logger *logger.Logger) (*indexer, error) {
 	return &indexer{
 		stemmer:   	textHandling.NewEnglishStemmer(),
-		sc:        	spellChecker.NewSpellChecker(maxTypo, ngc),
-		mu: new(sync.RWMutex),
+		mu: 		new(sync.RWMutex),
 		repository: repo,
 		vectorizer: vec,
 		logger:    	logger,
@@ -68,12 +67,17 @@ func (idx *indexer) Index(config *configs.ConfigData, global context.Context) {
 	defer idx.repository.SaveVisitedUrls(vis)
 	defer idx.repository.FlushAll()
 	
-	wp := workerPool.NewWorkerPool(config.WorkersCount, config.TasksCount, global)
+	wp := workerPool.NewWorkerPool(config.WorkersCount, config.TasksCount, global, idx.logger)
+	idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.INFO, "worker pool initialized"))
 	
-	pr, err := idx.repository.LoadPageRank()
-	defer idx.repository.SavePageRank(pr)
+	idx.sc = spellChecker.NewSpellChecker(config.MaxTypo, config.NGramCount)
+	idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.INFO, "spell checker initialized"))
+
+	var err error
+	idx.pageRank, err = idx.repository.LoadPageRank()
+	defer idx.repository.SavePageRank(idx.pageRank)
 	if err != nil {
-		idx.logger.Write(logger.NewMessage(err.Error(), logger.INDEX_LAYER, logger.CRITICAL_ERROR))
+		idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.CRITICAL_ERROR, "db error: %v", err))
 		return
 	}
 
@@ -82,7 +86,7 @@ func (idx *indexer) Index(config *configs.ConfigData, global context.Context) {
 		Depth:       	config.MaxDepth,
 		MaxLinksInPage: config.MaxLinksInPage,
 		OnlySameDomain: config.OnlySameDomain,
-	}, idx.logger, wp, idx, global, pr, idx.vectorizer.Vectorize).Run()
+	}, idx.logger, wp, idx, global, idx.vectorizer.Vectorize).Run()
 }
 
 func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Passage) error {
@@ -114,15 +118,15 @@ func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Pa
 	}
 	
 	if err := idx.repository.IndexNGrams(allWords, idx.sc.NGramCount); err != nil {
-		log.Printf("error indexing ngrams: %v", err)
+		idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.CRITICAL_ERROR, "error indexing ngrams: %v", err))
 		return err
 	}
 	if err := idx.repository.IndexDocumentWords(doc.Id, stem, pos); err != nil {
-		log.Printf("error indexing words: %v", err)
+		idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.CRITICAL_ERROR, "error indexing document words: %v", err))
 		return err
 	}
 	if err := idx.repository.SaveDocument(doc); err != nil {
-		log.Printf("error saving words: %v", err)
+		idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.CRITICAL_ERROR, "error saving document: %v", err))
 		return err
 	}
 
@@ -146,7 +150,7 @@ func (idx *indexer) HandleTextQuery(text string) ([]string, []map[[32]byte]model
 				return nil, nil, err
 			}
 			replacement := idx.sc.BestReplacement(words[i], conds)
-			log.Printf("%s has no documents, was replaced by: %s", words[i], replacement)
+			idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.DEBUG, "word '%s' replaced with '%s' in query", words[i], replacement))
 			_, stem, err := idx.stemmer.TokenizeAndStem(replacement)
 			if err != nil {
 				return nil, nil, err
@@ -211,23 +215,32 @@ func (idx *indexer) IsCrawledContent(id [32]byte, content []model.Passage) (bool
 	return crawled, err
 }
 
+func (idx *indexer) CalcPageRank(url string, linksCount int) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	idx.pageRank[url] = 1.0 / float64(linksCount)
+}
+
+func (idx *indexer) GetPageRank(url string) float64 {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	return idx.pageRank[url]
+}
+
 func (idx *indexer) GetDocumentByID(id [32]byte) (*model.Document, error) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-
 	return idx.repository.GetDocumentByID(id)
 }
 
 func (idx *indexer) GetDocumentsCount() (int, error) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-
 	return idx.repository.GetDocumentsCount()
 }
 
 func (idx *indexer) GetDocumentsByWord(word string) (map[[32]byte]model.WordCountAndPositions, error) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-
 	return idx.repository.GetDocumentsByWord(word)
 }

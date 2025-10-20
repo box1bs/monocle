@@ -3,7 +3,7 @@ package logger
 import (
 	"fmt"
 	"io"
-	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +21,8 @@ const (
 	SCRAPER_LAYER
 	REPOSITORY_LAYER
 	SEARCHER_LAYER
+	MAIN_LAYER
+	WORKER_POOL_LAYER
 )
 
 type Logger struct {
@@ -34,29 +36,36 @@ type message struct {
 	layer 	int
 }
 
-func NewAsyncLogger(info, error io.Writer) (*Logger, error) {
-	al := &Logger{
-		ch:   	make(chan message, 10000),
+func NewLogger(info, error io.Writer, cap int) *Logger {
+	log := &Logger{
+		ch:   	make(chan message, cap),
 		wg: 	new(sync.WaitGroup),	
 	}
-	al.wg.Add(1)
+	log.wg.Add(1)
 	go func() {
-		defer al.wg.Done()
-		for msg := range al.ch {
+		defer log.wg.Done()
+		for msg := range log.ch {
 			switch msg.t {
 			case INFO, DEBUG:
-				info.Write([]byte(al.CompareMessage(msg)))
+				if msg.t == DEBUG {
+					os.Stdout.Write(log.compareMessage(msg))
+					continue
+				}
+				info.Write(log.compareMessage(msg))
 			case ERROR, CRITICAL_ERROR:
-				error.Write([]byte(al.CompareMessage(msg)))
+				if msg.t == CRITICAL_ERROR {
+					os.Stderr.Write(log.compareMessage(msg))
+				}
+				error.Write(log.compareMessage(msg))
 			}
 		}
 	}()
-	return al, nil
+	return log
 }
 
-func (l *Logger) CompareMessage(msg message) string {
+func (log *Logger) compareMessage(msg message) []byte {
 	var s strings.Builder
-	s.WriteString(time.Now().Local().String())
+	s.WriteString(time.Now().Local().Format("2006-01-02 15:04:05"))
 	switch msg.t {
 	case INFO:
 		s.WriteString(" INFO: ")
@@ -68,26 +77,26 @@ func (l *Logger) CompareMessage(msg message) string {
 		s.WriteString(" CRITICAL_ERROR: ")
 	}
 	s.WriteString(msg.text + fmt.Sprintf(" on layer: %d ", msg.layer))
-	return s.String()
+	return []byte(s.String())
 }
 
-func (l *Logger) Write(msg message) {
+func (log *Logger) Write(msg message) {
 	select {
-	case l.ch <- msg:
+	case log.ch <- msg:
 	default:
-		log.Println("log channel full, dropping log: " + msg.text)
+		fmt.Printf("log channel full, dropping log: %s", msg.text)
 	}
 }
 
-func (l *Logger) Close() {
-	close(l.ch)
-	l.wg.Wait()
+func (log *Logger) Close() {
+	close(log.ch)
+	log.wg.Wait()
 }
 
-func NewMessage(text string, layer, t int) message {
+func NewMessage(layer, Type int, format string, v ...any) message {
 	return message{
-		text: text,
+		text: fmt.Sprintf(format, v...),
 		layer: layer,
-		t: t,
+		t: Type,
 	}
 }

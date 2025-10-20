@@ -92,7 +92,7 @@ func (ir *IndexRepository) flushChunk(ng string, buffer []string) error {
 	if err := ir.DB.Update(func(txn *badger.Txn) error {
 		return txn.Set(key, val)
 	}); err != nil {
-		ir.log.Write(logger.NewMessage(fmt.Sprintf("error flushing chunk %s, with error %v", ng, err), logger.REPOSITORY_LAYER, logger.CRITICAL_ERROR))
+		ir.log.Write(logger.NewMessage(logger.REPOSITORY_LAYER, logger.CRITICAL_ERROR, "error flushing chunk %s, with error %v", ng, err))
 		return err
 	}
 	return nil

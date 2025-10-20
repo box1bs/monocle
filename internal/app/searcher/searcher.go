@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"math"
 	"net/http"
 	"sort"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/box1bs/monocle/internal/model"
+	"github.com/box1bs/monocle/pkg/logger"
 )
 
 type index interface {
@@ -21,6 +21,7 @@ type index interface {
 	GetDocumentsCount() (int, error)
 	GetDocumentByID([32]byte) (*model.Document, error)
 	GetAVGLen() (float64, error)
+	GetPageRank(string) float64
 	HandleTextQuery(string) ([]string, []map[[32]byte]model.WordCountAndPositions, error)
 }
 
@@ -29,13 +30,15 @@ type vectorizer interface {
 }
 
 type Searcher struct {
+	log 		*logger.Logger
 	mu         	*sync.RWMutex
 	vectorizer  vectorizer
 	idx 		index
 }
 
-func NewSearcher(idx index, vec vectorizer) *Searcher {
+func NewSearcher(l *logger.Logger, idx index, vec vectorizer) *Searcher {
 	return &Searcher{
+		log: 		l,
 		mu:        	&sync.RWMutex{},
 		vectorizer: vec,
 		idx:       	idx,
@@ -63,7 +66,7 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 
 	words, index, err := s.idx.HandleTextQuery(query)
 	if err != nil {
-		log.Println(err)
+		s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.CRITICAL_ERROR, "handling words error: %v", err))
 		return nil
 	}
 
@@ -71,13 +74,13 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 
 	avgLen, err := s.idx.GetAVGLen()
 	if err != nil {
-		log.Println(err)
+		s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.ERROR, "%v", err))
 		return nil
 	}
 	
 	length, err := s.idx.GetDocumentsCount()
 	if err != nil {
-		log.Println(err)
+		s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.ERROR, "%v", err))
 		return nil
 	}
 
@@ -94,12 +97,12 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 			defer wg.Done()
 	
 			idf := math.Log(float64(length) / float64(len(index[i]) + 1)) + 1.0
-			//log.Printf("len documents with word: %s, %d", word, len(index[i]))
+			s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.DEBUG, "len documents with word: %s, %d", words[i], len(index[i])))
 	
 			for docID, item := range index[i] {
 				doc, err := s.idx.GetDocumentByID(docID)
 				if err != nil || doc == nil {
-					log.Printf("error: %v, doc: %v", err, doc)
+					s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.ERROR, "error: %v, doc: %v", err, doc))
 					continue
 				}
 				
@@ -155,11 +158,11 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 	defer cancel()
 	vec, err := s.vectorizer.Vectorize(query, c)
 	if err != nil {
-		log.Printf("error vectorozing query with error: %v", err)
+		s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.CRITICAL_ERROR, "error vectorozing query with error: %v", err))
 		return nil
 	}
 
-	//log.Printf("result len: %d", len(result))
+	s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.DEBUG, "result len: %d", len(result)))
 	
 	<- done
 	
@@ -183,7 +186,7 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 
 	length = len(filteredResult)
 	if length == 0 {
-		//panic("empty result")
+		s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.DEBUG, "empty result"))
 		return nil
 	}
 
@@ -196,6 +199,9 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 		}
 		if rank[filteredResult[i].Id].bm25 != rank[filteredResult[j].Id].bm25 {
 			return rank[filteredResult[i].Id].bm25 > rank[filteredResult[j].Id].bm25
+		}
+		if s.idx.GetPageRank(filteredResult[i].URL) != s.idx.GetPageRank(filteredResult[j].URL) {
+			return s.idx.GetPageRank(filteredResult[i].URL) > s.idx.GetPageRank(filteredResult[j].URL)
 		}
 		if rank[filteredResult[i].Id].TermProximity != rank[filteredResult[j].Id].TermProximity {
 			return rank[filteredResult[i].Id].TermProximity > rank[filteredResult[j].Id].TermProximity
@@ -216,6 +222,7 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 		}
 		bestPos, err := callRankAPI(list, condidates)
 		if err != nil {
+			s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.CRITICAL_ERROR, "python server error: %v", err))
 			return fl
 		}
 		fl[i * 10 + bestPos], fl[i] = fl[i], fl[i * 10 + bestPos]
@@ -230,6 +237,7 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 		}
 		bestPos, err := callRankAPI(list, condidates)
 		if err != nil {
+			s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.CRITICAL_ERROR, "python server error: %v", err))
 			return fl
 		}
 		fl[n / 10 * 10 + bestPos], fl[n / 10] = fl[n / 10], fl[n / 10 * 10 + bestPos]

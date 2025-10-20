@@ -34,9 +34,15 @@
         "https://venturebeat.com",
         "https://slashdot.org"
     ],
+    "info_log_path" : "./logs/info.log",
+    "error_log_path" : "./logs/error.log",
+    "log_channel_size" : 10000,
     "worker_count" : 50,
     "task_count" : 500,
     "max_links_in_page" : 100,
     "max_depth_crawl" : 8,
+    "ngram_count" : 3,
+    "max_typo" : 2,
+    "max_transaction_bytes" : 10485760,
     "only_same_domain" : false
 }

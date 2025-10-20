@@ -27,6 +27,7 @@ var urlRegex = regexp.MustCompile(`^https?://`)
 type indexer interface {
     HandleDocumentWords(*model.Document, []model.Passage) error
 	IsCrawledContent([32]byte, []model.Passage) (bool, error)
+	CalcPageRank(string, int)
 }
 
 type workerPool interface {
@@ -41,12 +42,11 @@ type webScraper struct {
 	mu 				*sync.Mutex
 	cfg 		  	*ConfigData
 	log 			*logger.Logger
+	rlMu         	*sync.RWMutex
 	pool           	workerPool
 	idx 			indexer
 	globalCtx		context.Context
 	rlMap			map[string]*rateLimiter
-	//pageRank 		map[string]float64
-	rlMu         	*sync.RWMutex
 	vectorize		func(string, context.Context) ([][]float64, error)
 }
 
@@ -59,7 +59,7 @@ type ConfigData struct {
 
 const sitemap = "sitemap.xml"
 
-func NewScraper(mp *sync.Map, cfg *ConfigData, l *logger.Logger, wp workerPool, idx indexer, c context.Context, pr map[string]float64, vectorize func(string, context.Context) ([][]float64, error)) *webScraper {
+func NewScraper(mp *sync.Map, cfg *ConfigData, l *logger.Logger, wp workerPool, idx indexer, c context.Context, vectorize func(string, context.Context) ([][]float64, error)) *webScraper {
 	return &webScraper{
 		client: &http.Client{
 			Timeout: time.Second,
@@ -73,12 +73,11 @@ func NewScraper(mp *sync.Map, cfg *ConfigData, l *logger.Logger, wp workerPool, 
 		mu: 			new(sync.Mutex),
 		cfg: 			cfg,
 		log:			l,
+		rlMu:           new(sync.RWMutex),
 		pool:           wp,
 		idx: 			idx,
 		globalCtx:		c,
 		rlMap: 			make(map[string]*rateLimiter),
-		//pageRank: 		pr,
-		rlMu:           new(sync.RWMutex),
 		vectorize:		vectorize,
 	}
 }
@@ -93,7 +92,7 @@ func (ws *webScraper) Run() {
 	for _, uri := range ws.cfg.StartURLs {
 		parsed, err := url.Parse(uri)
 		if err != nil {
-			ws.log.Write(logger.NewMessage(fmt.Sprintf("error parsing link: %v", err), logger.SCRAPER_LAYER, logger.ERROR))
+			ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error parsing link: %v", err))
 			continue
 		}
 		ws.pool.Submit(func() {
@@ -103,7 +102,7 @@ func (ws *webScraper) Run() {
 		})
 	}
 	ws.pool.Wait()
-	ws.log.Write(logger.NewMessage("waiting for stoppnig worker pool", logger.SCRAPER_LAYER, logger.DEBUG))
+	ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.DEBUG, "waiting for stoppnig worker pool"))
 	ws.pool.Stop()
 }
 
@@ -149,19 +148,19 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
 	if urls, err := ws.haveSitemap(currentURL); err == nil && len(urls) > 0 {
 		ws.scrapeThroughtSitemap(ctx, currentURL, rules, depth)
 	} else if err != nil {
-		ws.log.Write(logger.NewMessage(fmt.Sprintf("error parsing sitemap with error: %v on page %s", err, currentURL), logger.SCRAPER_LAYER, logger.ERROR))
+		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error parsing sitemap with error: %v on page %s", err, currentURL))
 	}
     
 	c, cancel := context.WithTimeout(ctx, time.Second * 30)
 	defer cancel()
     doc, err := ws.getHTML(c, currentURL.String(), rl)
     if err != nil || doc == "" {
-		ws.log.Write(logger.NewMessage(fmt.Sprintf("error parsing page: %s, with error: %v\n", currentURL, err), logger.SCRAPER_LAYER, logger.ERROR))
+		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error parsing page: %s, with error: %v\n", currentURL, err))
         return
     }
 	
 	if checkContext(ctx) {return}
-	//ws.write(currentURL)
+
 	id := sha256.Sum256([]byte(normalized))
     document := &model.Document{
         Id: id,
@@ -186,37 +185,35 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
 	
 	document.WordVec, err = ws.vectorize(fullText.String(), c)
 	if err != nil {
-		ws.log.Write(logger.NewMessage(fmt.Sprintf("error vectorizing page: %s with error %v\n", currentURL, err), logger.SCRAPER_LAYER, logger.CRITICAL_ERROR))
+		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.CRITICAL_ERROR, "error vectorizing page: %s with error %v\n", currentURL, err))
 		return
 	}
 
 	if checkContext(ctx) {return}
 
     if err := ws.idx.HandleDocumentWords(document, passages); err != nil {
-		ws.log.Write(logger.NewMessage(fmt.Sprintf("error handling words for page: %s with error %v\n", currentURL, err), logger.SCRAPER_LAYER, logger.CRITICAL_ERROR))
+		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.CRITICAL_ERROR, "error handling words for page: %s with error %v\n", currentURL, err))
 		return
 	}
 
 	if len(links) == 0 {
-		ws.log.Write(logger.NewMessage(fmt.Sprintf("empty links in page %s\n", currentURL), logger.SCRAPER_LAYER, logger.ERROR))
+		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "empty links in page %s\n", currentURL))
 		return
 	}
-
-	//ws.mu.Lock()
-	//ws.pageRank[string(id[:])] += 1.0 / float64(len(links))
-	//ws.mu.Unlock()
 	
 	for _, link := range links {
 		if checkContext(ctx) {return}
-
+		
 		if ws.cfg.OnlySameDomain && !link.sameDomain {
 			continue
 		}
-
+		
 		rls := rules
         if !link.sameDomain {
-            rls = nil
+			rls = nil
         }
+
+		ws.idx.CalcPageRank(link.link.String(), len(links))
 
         ws.pool.Submit(func() {
 			if checkContext(ws.globalCtx) {return}
@@ -229,6 +226,7 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
 		})
     }
 }
+
 func (ws *webScraper) haveSitemap(url *url.URL) ([]string, error) {
 	sitemapURL := url.String()
 	if !strings.Contains(sitemapURL, sitemap) {
@@ -268,7 +266,7 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 			if tokenizer.Err() == io.EOF {
 				break
 			}
-			ws.log.Write(logger.NewMessage("error parsing HTML with url: " + baseURL.String(), logger.SCRAPER_LAYER, logger.ERROR))
+			ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error parsing HTML with url: %s", baseURL.String()))
 			break
 		}
 
@@ -305,7 +303,7 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 						if link != "" && len(links) < ws.cfg.MaxLinksInPage {
 							normalized, err := normalizeUrl(link)
 							if err != nil {
-								ws.log.Write(logger.NewMessage(fmt.Sprintf("error normalizing url: %s, with error: %v", link, err), logger.SCRAPER_LAYER, logger.ERROR))
+								ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error normalizing url: %s, with error: %v", link, err))
 								break
 							}
 							if _, vis := ws.visited.Load(normalized); vis {
@@ -313,7 +311,7 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 							}
 							uri, err := url.Parse(link)
 							if err != nil {
-								ws.log.Write(logger.NewMessage(fmt.Sprintf("error parsing link: %v", err), logger.SCRAPER_LAYER, logger.ERROR))
+								ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error parsing link: %v", err))
 								break
 							}
 							if rules != nil {
@@ -461,10 +459,10 @@ func (ws *webScraper) scrapeThroughtSitemap(ctx context.Context, current *url.UR
 	if urls, err := ws.haveSitemap(current); err == nil && len(urls) > 0 {
 		for _, link := range urls {
 			if checkContext(ctx) {return}
-	
+
 			parsed, err := url.Parse(link)
 			if err != nil {
-				ws.log.Write(logger.NewMessage(fmt.Sprintf("error parsing link: %v", err), logger.SCRAPER_LAYER, logger.ERROR))
+				ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error parsing link: %v", err))
 				continue
 			}
 			same := isSameOrigin(parsed, current)
