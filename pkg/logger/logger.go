@@ -3,11 +3,12 @@ package logger
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"sync"
 	"time"
 )
+
+type messageType int
 
 const (
 	INFO = iota
@@ -15,6 +16,8 @@ const (
 	ERROR
 	CRITICAL_ERROR
 )
+
+type layer int
 
 const (
 	INDEX_LAYER = iota
@@ -32,8 +35,8 @@ type Logger struct {
 
 type message struct {
 	text 	string
-	t 		int
-	layer 	int
+	t 		messageType
+	layer 	layer
 }
 
 func NewLogger(info, error io.Writer, cap int) *Logger {
@@ -47,15 +50,8 @@ func NewLogger(info, error io.Writer, cap int) *Logger {
 		for msg := range log.ch {
 			switch msg.t {
 			case INFO, DEBUG:
-				if msg.t == DEBUG {
-					os.Stdout.Write(log.compareMessage(msg))
-					continue
-				}
 				info.Write(log.compareMessage(msg))
 			case ERROR, CRITICAL_ERROR:
-				if msg.t == CRITICAL_ERROR {
-					os.Stderr.Write(log.compareMessage(msg))
-				}
 				error.Write(log.compareMessage(msg))
 			}
 		}
@@ -77,6 +73,9 @@ func (log *Logger) compareMessage(msg message) []byte {
 		s.WriteString(" CRITICAL_ERROR: ")
 	}
 	s.WriteString(msg.text + fmt.Sprintf(" on layer: %d ", msg.layer))
+	if !strings.HasSuffix(strings.TrimSpace(s.String()), "\n") {
+		s.WriteString("\n")
+	}
 	return []byte(s.String())
 }
 
@@ -93,7 +92,7 @@ func (log *Logger) Close() {
 	log.wg.Wait()
 }
 
-func NewMessage(layer, Type int, format string, v ...any) message {
+func NewMessage(layer layer, Type messageType, format string, v ...any) message {
 	return message{
 		text: fmt.Sprintf(format, v...),
 		layer: layer,

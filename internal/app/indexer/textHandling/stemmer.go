@@ -147,15 +147,14 @@ func (s *EnglishStemmer) measure(word string) int {
 func (s *EnglishStemmer) TokenizeAndStem(text string) ([]string, []string, error) {
 	tokens := s.tokenizer.entityTokenize(text)
 	wordTokens := []string{}
-
 	stemmedTokens := []string{}
 	for _, token := range tokens {
 		if token.Type == WORD && len(token.Value) > 0 {
-			if stemmed := s.stem(token.Value); stemmed != "" {
+			if stemmed := s.stem(token.Value); stemmed != "" { // пофиксить: не игнорировать стоп слова, их вполне можно использовать как кандидаты для замены, ну или нет, т.к. у них больше вероятность по цепям маркова
 				wordTokens = append(wordTokens, token.Value)
 				stemmedTokens = append(stemmedTokens, stemmed)
 			}
-		} else if token.Type == ALPHANUMERIC {
+		} else if token.Type == ALPHANUMERIC || token.Type == NUMBER || token.Type == EMAIL_ADDR || token.Type == URL_ADDR {
 			stemmedTokens = append(stemmedTokens, token.Value)
 		}
 	}

@@ -31,12 +31,9 @@ func NewWorkerPool(size int, queueCapacity int, c context.Context, l *logger.Log
 		for range t.C {
 			select{
 			case <-c.Done():
-				if len(wp.buf) != 0 {
-					continue
-				}
-				tmp := wp.workers
+				tmp := int(wp.workers) + len(wp.buf)
 				<-t.C
-				if tmp == wp.workers {
+				if tmp == int(wp.workers) + len(wp.buf) {
 					t.Stop()
 					wp.cleanCalls()
 				}
@@ -51,6 +48,9 @@ func NewWorkerPool(size int, queueCapacity int, c context.Context, l *logger.Log
 }
 	
 func (wp *WorkerPool) cleanCalls() {
+	for range wp.buf {
+		wp.wg.Done()
+	}
 	for range wp.workers {
 		wp.wg.Done()
 	}

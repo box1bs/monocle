@@ -47,7 +47,7 @@ type webScraper struct {
 	idx 			indexer
 	globalCtx		context.Context
 	rlMap			map[string]*rateLimiter
-	vectorize		func(string, context.Context) ([][]float64, error)
+	putDocReq		func(string, context.Context) <-chan [][]float64
 }
 
 type ConfigData struct {
@@ -59,10 +59,10 @@ type ConfigData struct {
 
 const sitemap = "sitemap.xml"
 
-func NewScraper(mp *sync.Map, cfg *ConfigData, l *logger.Logger, wp workerPool, idx indexer, c context.Context, vectorize func(string, context.Context) ([][]float64, error)) *webScraper {
+func NewScraper(mp *sync.Map, cfg *ConfigData, l *logger.Logger, wp workerPool, idx indexer, c context.Context, putDocReq func(string, context.Context) <-chan [][]float64) *webScraper {
 	return &webScraper{
 		client: &http.Client{
-			Timeout: time.Second,
+			Timeout: 15 * time.Second,
 			Transport: &http.Transport{
 				IdleConnTimeout:   15 * time.Second,
 				DisableKeepAlives: false,
@@ -78,7 +78,7 @@ func NewScraper(mp *sync.Map, cfg *ConfigData, l *logger.Logger, wp workerPool, 
 		idx: 			idx,
 		globalCtx:		c,
 		rlMap: 			make(map[string]*rateLimiter),
-		vectorize:		vectorize,
+		putDocReq:		putDocReq,
 	}
 }
 
@@ -183,19 +183,25 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
 	c, cancel = context.WithTimeout(ctx, time.Second * 20)
 	defer cancel()
 	
-	document.WordVec, err = ws.vectorize(fullText.String(), c)
-	if err != nil {
-		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.CRITICAL_ERROR, "error vectorizing page: %s with error %v\n", currentURL, err))
+	var ok bool
+	select {
+	case document.WordVec, ok = <-ws.putDocReq(fullText.String(), c):
+		if !ok {
+			ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.CRITICAL_ERROR, "error vectorizing document for page: %s\n", currentURL))
+			return
+		}
+	case <-c.Done():
+		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.CRITICAL_ERROR, "timeout vectorizing document for page: %s\n", currentURL))
 		return
 	}
-
+	
 	if checkContext(ctx) {return}
-
+	
     if err := ws.idx.HandleDocumentWords(document, passages); err != nil {
 		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.CRITICAL_ERROR, "error handling words for page: %s with error %v\n", currentURL, err))
 		return
 	}
-
+	
 	if len(links) == 0 {
 		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "empty links in page %s\n", currentURL))
 		return

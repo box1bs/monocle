@@ -26,7 +26,7 @@ type index interface {
 }
 
 type vectorizer interface {
-	Vectorize(string, context.Context) ([][]float64, error)
+	PutDocQuery(string, context.Context) <-chan [][]float64
 }
 
 type Searcher struct {
@@ -156,12 +156,12 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 	
 	c, cancel := context.WithTimeout(context.Background(), 5 * time.Second)
 	defer cancel()
-	vec, err := s.vectorizer.Vectorize(query, c)
-	if err != nil {
-		s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.CRITICAL_ERROR, "error vectorozing query with error: %v", err))
+	vec, ok := <-s.vectorizer.PutDocQuery(query, c)
+	if !ok {
+		s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.CRITICAL_ERROR, "error vectorozing query"))
 		return nil
 	}
-
+	
 	s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.DEBUG, "result len: %d", len(result)))
 	
 	<- done

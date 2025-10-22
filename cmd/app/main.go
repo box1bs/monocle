@@ -68,7 +68,8 @@ func main() {
 		//os.Exit(1)
 	}()
 
-	vec := textHandling.NewVectorizer()
+	vec := textHandling.NewVectorizer(ctx, cfg.WorkersCount)
+	defer vec.Close()
 	i, err := indexer.NewIndexer(ir, vec, log)
 	if err != nil {
 		panic(err)

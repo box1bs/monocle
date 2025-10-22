@@ -37,26 +37,22 @@ type repository interface {
 	CheckContent([32]byte, [32]byte) (bool, *model.Document, error)
 }
 
-type vectorizer interface {
-	Vectorize(string, context.Context) ([][]float64, error)
-}
-
 type indexer struct {
 	stemmer 	*textHandling.EnglishStemmer
 	sc 			*spellChecker.SpellChecker
 	logger 		*logger.Logger
+	vectorizer 	*textHandling.Vectorizer
 	mu 			*sync.RWMutex
 	pageRank 	map[string]float64
 	repository 	repository
-	vectorizer 	vectorizer
 }
 
-func NewIndexer(repo repository, vec vectorizer, logger *logger.Logger) (*indexer, error) {
+func NewIndexer(repo repository,vec *textHandling.Vectorizer, logger *logger.Logger) (*indexer, error) {
 	return &indexer{
+		vectorizer: vec,
 		stemmer:   	textHandling.NewEnglishStemmer(),
 		mu: 		new(sync.RWMutex),
 		repository: repo,
-		vectorizer: vec,
 		logger:    	logger,
 	}, nil
 }
@@ -86,7 +82,7 @@ func (idx *indexer) Index(config *configs.ConfigData, global context.Context) {
 		Depth:       	config.MaxDepth,
 		MaxLinksInPage: config.MaxLinksInPage,
 		OnlySameDomain: config.OnlySameDomain,
-	}, idx.logger, wp, idx, global, idx.vectorizer.Vectorize).Run()
+	}, idx.logger, wp, idx, global, idx.vectorizer.PutDocQuery).Run()
 }
 
 func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Passage) error {

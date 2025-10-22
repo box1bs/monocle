@@ -72,12 +72,11 @@ def get_cls_embeddings(content: str, max_length=512) -> list[list[float]]:
 @app.route('/vectorize', methods=['POST'])
 def get_embeddings():
     doc_data = request.get_json()
-    if not doc_data or 'text' not in doc_data:
+    if not doc_data:
         return jsonify({'error': 'Invalid input'}), 400
 
-    doc = Document(text=doc_data['text'])
-    matrix_vec = get_cls_embeddings(doc.text)
-    return jsonify({'vec': matrix_vec})
+    doc = [Document(text=d['text']) for d in doc_data]
+    return jsonify({'vec': [get_cls_embeddings(d.text) for d in doc]})
 
 @app.route('/rank', methods=['POST'])
 def get_ranked():

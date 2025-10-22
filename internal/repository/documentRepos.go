@@ -35,25 +35,24 @@ func (ir *IndexRepository) documentToBytes(doc *model.Document) ([]byte, error) 
 
 func (ir *IndexRepository) bytesToDocument(body []byte) (*model.Document, error) {
 	p := payload{}
-
+	
 	if err := json.Unmarshal(body, &p); err != nil {
 		return nil, err
 	}
-
+	
 	if len(p.Id) != 32 {
 		return nil, fmt.Errorf("invalid id length: %d", len(p.Id))
 	}
-
+	
 	var idArr [32]byte
 	copy(idArr[:], p.Id)
-
-	doc := &model.Document{
+	
+	return &model.Document{
 		Id:        idArr,
 		URL:       p.URL,
 		WordCount: p.WordCount,
 		WordVec:   p.Vec,
-	}
-	return doc, nil
+	}, nil
 }
 
 func (ir *IndexRepository) SaveDocument(doc *model.Document) error {
@@ -61,7 +60,6 @@ func (ir *IndexRepository) SaveDocument(doc *model.Document) error {
 	if err != nil {
 		return err
 	}
-
 	return ir.DB.Update(func(txn *badger.Txn) error {
 		if err := txn.Set(fmt.Appendf(nil, DocumentKeyPrefix, doc.Id[:]), docBytes); err != nil {
 			return err
@@ -135,7 +133,7 @@ func (ir *IndexRepository) GetDocumentsCount() (int, error) {
 	var count int
 
 	err := ir.DB.View(func(txn *badger.Txn) error {
-		docPrefix := []byte(DocumentKeyPrefix)
+		docPrefix := fmt.Appendf(nil, DocumentKeyPrefix, "")
 
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = false
