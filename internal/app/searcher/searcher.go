@@ -17,12 +17,14 @@ import (
 )
 
 type index interface {
+	HandleTextQuery(string) ([]string, []map[[32]byte]model.WordCountAndPositions, error)
+	GetAVGLen() (float64, error)
+}
+
+type resitory interface {
 	GetDocumentsByWord(string) (map[[32]byte]model.WordCountAndPositions, error)
 	GetDocumentsCount() (int, error)
 	GetDocumentByID([32]byte) (*model.Document, error)
-	GetAVGLen() (float64, error)
-	GetPageRank(string) float64
-	HandleTextQuery(string) ([]string, []map[[32]byte]model.WordCountAndPositions, error)
 }
 
 type vectorizer interface {
@@ -34,14 +36,16 @@ type Searcher struct {
 	mu         	*sync.RWMutex
 	vectorizer  vectorizer
 	idx 		index
+	repo 	 	resitory
 }
 
-func NewSearcher(l *logger.Logger, idx index, vec vectorizer) *Searcher {
+func NewSearcher(l *logger.Logger, idx index, repo resitory, vec vectorizer) *Searcher {
 	return &Searcher{
 		log: 		l,
 		mu:        	&sync.RWMutex{},
 		vectorizer: vec,
 		idx:       	idx,
+		repo: 	 	repo,
 	}
 }
 
@@ -78,7 +82,7 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 		return nil
 	}
 	
-	length, err := s.idx.GetDocumentsCount()
+	length, err := s.repo.GetDocumentsCount()
 	if err != nil {
 		s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.ERROR, "%v", err))
 		return nil
@@ -87,7 +91,7 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 	result := make([]*model.Document, 0)
 	alreadyIncluded := make(map[[32]byte]struct{})
 	var wg sync.WaitGroup
-	var rankMu sync.Mutex
+	var rankMu sync.RWMutex
 	var resultMu sync.Mutex
 	done := make(chan struct{})
 
@@ -100,11 +104,14 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 			s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.DEBUG, "len documents with word: %s, %d", words[i], len(index[i])))
 	
 			for docID, item := range index[i] {
-				doc, err := s.idx.GetDocumentByID(docID)
+				rankMu.RLock()
+				doc, err := s.repo.GetDocumentByID(docID)
 				if err != nil || doc == nil {
+					rankMu.RUnlock()
 					s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.ERROR, "error: %v, doc: %v", err, doc))
 					continue
 				}
+				rankMu.RUnlock()
 				
 				rankMu.Lock()
 				r, ex := rank[docID]
@@ -199,9 +206,6 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 		}
 		if rank[filteredResult[i].Id].bm25 != rank[filteredResult[j].Id].bm25 {
 			return rank[filteredResult[i].Id].bm25 > rank[filteredResult[j].Id].bm25
-		}
-		if s.idx.GetPageRank(filteredResult[i].URL) != s.idx.GetPageRank(filteredResult[j].URL) {
-			return s.idx.GetPageRank(filteredResult[i].URL) > s.idx.GetPageRank(filteredResult[j].URL)
 		}
 		if rank[filteredResult[i].Id].TermProximity != rank[filteredResult[j].Id].TermProximity {
 			return rank[filteredResult[i].Id].TermProximity > rank[filteredResult[j].Id].TermProximity

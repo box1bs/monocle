@@ -27,7 +27,6 @@ var urlRegex = regexp.MustCompile(`^https?://`)
 type indexer interface {
     HandleDocumentWords(*model.Document, []model.Passage) error
 	IsCrawledContent([32]byte, []model.Passage) (bool, error)
-	CalcPageRank(string, int)
 }
 
 type workerPool interface {
@@ -62,7 +61,7 @@ const sitemap = "sitemap.xml"
 func NewScraper(mp *sync.Map, cfg *ConfigData, l *logger.Logger, wp workerPool, idx indexer, c context.Context, putDocReq func(string, context.Context) <-chan [][]float64) *webScraper {
 	return &webScraper{
 		client: &http.Client{
-			Timeout: 15 * time.Second,
+			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
 				IdleConnTimeout:   15 * time.Second,
 				DisableKeepAlives: false,
@@ -147,8 +146,6 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
 		
 	if urls, err := ws.haveSitemap(currentURL); err == nil && len(urls) > 0 {
 		ws.scrapeThroughtSitemap(ctx, currentURL, rules, depth)
-	} else if err != nil {
-		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error parsing sitemap with error: %v on page %s", err, currentURL))
 	}
     
 	c, cancel := context.WithTimeout(ctx, time.Second * 30)
@@ -219,8 +216,6 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
 			rls = nil
         }
 
-		ws.idx.CalcPageRank(link.link.String(), len(links))
-
         ws.pool.Submit(func() {
 			if checkContext(ws.globalCtx) {return}
 			c, cancel := context.WithTimeout(ws.globalCtx, 90 * time.Second)
@@ -286,7 +281,7 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 			tagName := strings.ToLower(t.Data)
 			switch tagName {
 			case "h1", "h2":
-				tagStack = append(tagStack, [2]byte{'h', tagName[1]})
+				tagStack = append(tagStack, [2]byte{'h', byte([]rune(tagName)[1])})
 
 			case "div":
 				for _, attr := range t.Attr {

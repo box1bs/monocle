@@ -33,13 +33,13 @@ func main() {
 	in := os.Stdout
 	er := os.Stderr
 	if cfg.InfoLogPath != "-" {
-		in, err = os.OpenFile(cfg.InfoLogPath, os.O_WRONLY, 0644)
+		in, err = os.Create(cfg.InfoLogPath)
 		if err != nil {
 			panic(err)
 		}
 	}
 	if cfg.ErrorLogPath != "-" {
-		er, err = os.OpenFile(cfg.ErrorLogPath, os.O_WRONLY, 0644)
+		er, err = os.Create(cfg.ErrorLogPath)
 		if err != nil {
 			panic(err)
 		}
@@ -50,7 +50,7 @@ func main() {
 	log := logger.NewLogger(in, er, cfg.LogChannelSize)
 	defer log.Close()
 
-	ir, err := repository.NewIndexRepository("index/badger", log, cfg.MaxTransactionBytes)
+	ir, err := repository.NewIndexRepository(cfg.IndexPath, log, cfg.MaxTransactionBytes)
 	if err != nil {
 		panic(err)
 	}
@@ -68,7 +68,7 @@ func main() {
 		//os.Exit(1)
 	}()
 
-	vec := textHandling.NewVectorizer(ctx, cfg.WorkersCount)
+	vec := textHandling.NewVectorizer(ctx, cfg.WorkersCount, cfg.TickerTimeMilliseconds)
 	defer vec.Close()
 	i, err := indexer.NewIndexer(ir, vec, log)
 	if err != nil {
@@ -76,7 +76,7 @@ func main() {
 	}
 	i.Index(cfg, ctx)
 
-	count, err := i.GetDocumentsCount()
+	count, err := ir.GetDocumentsCount()
 	if err != nil {
 		panic(err)
 	}
@@ -84,7 +84,7 @@ func main() {
 	log.Write(logger.NewMessage(logger.MAIN_LAYER, logger.INFO, "index built with %d documents", count))
 	fmt.Printf("Index built with %d documents. Enter search queries (Ctrl+C to exit):\n", count)
 
-	s := searcher.NewSearcher(log, i, vec)
+	s := searcher.NewSearcher(log, i, ir, vec)
 
 	reader := bufio.NewReader(os.Stdin)
 	for {

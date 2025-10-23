@@ -61,7 +61,7 @@ func NewLogger(info, error io.Writer, cap int) *Logger {
 
 func (log *Logger) compareMessage(msg message) []byte {
 	var s strings.Builder
-	s.WriteString(time.Now().Local().Format("2006-01-02 15:04:05"))
+	s.WriteString(time.Now().Format("2006-01-02 15:04:05"))
 	switch msg.t {
 	case INFO:
 		s.WriteString(" INFO: ")
@@ -72,10 +72,7 @@ func (log *Logger) compareMessage(msg message) []byte {
 	case CRITICAL_ERROR:
 		s.WriteString(" CRITICAL_ERROR: ")
 	}
-	s.WriteString(msg.text + fmt.Sprintf(" on layer: %d ", msg.layer))
-	if !strings.HasSuffix(strings.TrimSpace(s.String()), "\n") {
-		s.WriteString("\n")
-	}
+	s.WriteString(fmt.Sprintf("%s on layer: %d\n",strings.TrimSuffix(msg.text, "\n"), msg.layer))
 	return []byte(s.String())
 }
 

@@ -73,14 +73,14 @@ func (v *Vectorizer) vectorize(reqData []reqBody) {
 	}
 }
 
-func NewVectorizer(ctx context.Context, cap int) *Vectorizer {
+func NewVectorizer(ctx context.Context, cap int, tickerTime int) *Vectorizer {
 	v := &Vectorizer{
 		client: &http.Client{},
 		docQueue: make(chan reqBody, cap),
 	}
 
 	go func() {
-		t := time.NewTicker(1 * time.Second)
+		t := time.NewTicker(time.Duration(tickerTime) * time.Millisecond)
 		defer t.Stop()
 		for range t.C {
 			select {

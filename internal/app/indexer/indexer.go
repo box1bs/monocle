@@ -210,33 +210,3 @@ func (idx *indexer) IsCrawledContent(id [32]byte, content []model.Passage) (bool
 
 	return crawled, err
 }
-
-func (idx *indexer) CalcPageRank(url string, linksCount int) {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-	idx.pageRank[url] = 1.0 / float64(linksCount)
-}
-
-func (idx *indexer) GetPageRank(url string) float64 {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-	return idx.pageRank[url]
-}
-
-func (idx *indexer) GetDocumentByID(id [32]byte) (*model.Document, error) {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-	return idx.repository.GetDocumentByID(id)
-}
-
-func (idx *indexer) GetDocumentsCount() (int, error) {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-	return idx.repository.GetDocumentsCount()
-}
-
-func (idx *indexer) GetDocumentsByWord(word string) (map[[32]byte]model.WordCountAndPositions, error) {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-	return idx.repository.GetDocumentsByWord(word)
-}
