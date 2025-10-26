@@ -133,7 +133,7 @@ func (ir *IndexRepository) GetDocumentsCount() (int, error) {
 	var count int
 
 	err := ir.DB.View(func(txn *badger.Txn) error {
-		docPrefix := fmt.Appendf(nil, DocumentKeyPrefix, "")
+		docPrefix := []byte("doc:")
 
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = false

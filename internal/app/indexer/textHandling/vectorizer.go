@@ -20,13 +20,12 @@ type VecResponce struct {
 type reqBody struct {
 	Text 		string 				`json:"text"`
 	out 		chan [][]float64 	`json:"-"`
-	localCTX 	context.Context 	`json:"-"`
 }
 
 func (v *Vectorizer) PutDocQuery(t string, ctx context.Context) <- chan [][]float64 {
 	resChan := make(chan [][]float64, 1)
 	select {
-	case v.docQueue <- reqBody{Text: t, out: resChan, localCTX: ctx}:
+	case v.docQueue <- reqBody{Text: t, out: resChan}:
 		return resChan
 	case <-ctx.Done():
 		return resChan
@@ -63,12 +62,6 @@ func (v *Vectorizer) vectorize(reqData []reqBody) {
 	}
 	
 	for i, r := range reqData {
-		select{
-		case <-r.localCTX.Done():
-			close(r.out)
-			continue
-		default:
-		}
 		r.out <- vecResponce.Vec[i]
 	}
 }

@@ -2,7 +2,6 @@ package scraper
 
 import (
 	"bytes"
-	"context"
 	"encoding/xml"
 	"errors"
 	"io"
@@ -110,13 +109,4 @@ func decodeSitemap(r io.Reader, limiter int) ([]string, error) {
 
 func isSameOrigin(rawURL *url.URL, baseURL *url.URL) bool {
 	return strings.Contains(baseURL.Hostname(), rawURL.Hostname())
-}
-
-func checkContext(ctx context.Context) bool {
-	select {
-		case <-ctx.Done():
-			return true
-		default:
-	}
-	return false
 }
