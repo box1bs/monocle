@@ -120,8 +120,8 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 				r.SumTokenInPackage += item.Count
 				r.tf_idf += float64(doc.WordCount) * idf
 				r.bm25 += culcBM25(idf, float64(item.Count), doc, avgLen)
-				positions := []*[]model.Position{}
 				if r.TermProximity == 0 {
+					positions := []*[]model.Position{}
 					coverage := 0.0
 					docLen := 0.0
 					for i := range words {
@@ -131,14 +131,13 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 							docLen += float64(l)
 						}
 					}
-					r.TermProximity = calcQueryDencity(positions, queryLen)
+					r.TermProximity = getMinQueryDistInDoc(positions, queryLen)
 					r.QueryDencity = coverage / docLen
 					r.QueryCoverage = coverage / float64(queryLen)
 
 					r.WordInUrl, r.LogLenWordInURL = boyerMoorAlgorithm(strings.ToLower(doc.URL), words)
 					r.LenURL = len(doc.URL)
-				}
-				if !r.HasWordInHeader {
+					
 					for i := 0; i < item.Count && !r.HasWordInHeader; i++ {
 						r.HasWordInHeader = item.Positions[i].Type == 'h'
 					}

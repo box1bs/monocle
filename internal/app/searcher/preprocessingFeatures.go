@@ -47,7 +47,7 @@ func culcBM25(idf float64, tf float64, doc *model.Document, avgLen float64) floa
 	return idf * (tf * (k1 + 1)) / (tf + k1*(1-b+b*float64(doc.WordCount)/avgLen))
 }
 
-func calcQueryDencity(positions []*[]model.Position, lenQuery int) int {
+func getMinQueryDistInDoc(positions []*[]model.Position, lenQuery int) int {
 	minDencity := math.MaxInt
 
 	bs := func(cur, target int) int {
