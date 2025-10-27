@@ -18,7 +18,6 @@ type index interface {
 }
 
 type resitory interface {
-	GetDocumentsByWord(string) (map[[32]byte]model.WordCountAndPositions, error)
 	GetDocumentsCount() (int, error)
 	GetDocumentByID([32]byte) (*model.Document, error)
 }

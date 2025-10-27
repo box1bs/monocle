@@ -1,15 +1,9 @@
 package scraper
 
 import (
-	"bytes"
-	"encoding/xml"
 	"errors"
-	"io"
-	"net/http"
 	"net/url"
 	"strings"
-
-	"golang.org/x/net/html/charset"
 )
 
 func makeAbsoluteURL(rawURL string, baseURL *url.URL) (string, error) {
@@ -60,51 +54,6 @@ func normalizeUrl(rawUrl string) (string, error) {
     }
 
 	return normalized.String(), nil
-}
-
-func getSitemapURLs(URL string, cli *http.Client, limiter int) ([]string, error) {
-	resp, err := cli.Get(URL)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	body = bytes.TrimPrefix(bytes.ReplaceAll(body, []byte(`xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"`), []byte("")), []byte("\xef\xbb\xbf"))
-	return decodeSitemap(bytes.NewReader(bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))), limiter)
-}
-
-func decodeSitemap(r io.Reader, limiter int) ([]string, error) {
-	var urls []string
-	dec := xml.NewDecoder(r)
-	dec.CharsetReader = charset.NewReaderLabel
-	for {
-		token, err := dec.Token()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		if element, ok := token.(xml.StartElement); ok {
-			if element.Name.Local == "loc" {
-				var url string
-				if err := dec.DecodeElement(&url, &element); err != nil {
-					continue
-				}
-				urls = append(urls, url)
-				if len(urls) >= limiter {
-					return urls, nil
-				}
-			}
-		}
-	}
-
-	return urls, nil
 }
 
 func isSameOrigin(rawURL *url.URL, baseURL *url.URL) bool {

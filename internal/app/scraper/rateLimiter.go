@@ -10,13 +10,17 @@ type rateLimiter struct {
 	token 		chan struct{}
 	quit  		chan struct{}
 	wg    		*sync.WaitGroup
+	R 			int
 }
+
+const DefaultDelay = 3
 
 func NewRateLimiter(rate int) *rateLimiter {
 	rl := &rateLimiter{
-		token: make(chan struct{}, 1),
-		quit:  make(chan struct{}),
-		wg:    new(sync.WaitGroup),
+		token: 	make(chan struct{}, 1),
+		quit:  	make(chan struct{}),
+		wg:    	new(sync.WaitGroup),
+		R: 		rate,
 	}
 	rl.wg.Add(1)
 	go rl.handleLimits(rate)
