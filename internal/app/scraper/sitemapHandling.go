@@ -14,6 +14,22 @@ import (
 	"golang.org/x/net/html/charset"
 )
 
+func (ws *webScraper) fetchPageRulesAndOffers(ctx context.Context, cur *url.URL, rules *parser.RobotsTxt, depth, localDepth int) {
+	if r, err := parser.FetchRobotsTxt(ctx, cur.String(), ws.client); r != "" && err == nil {
+		robotsTXT := parser.ParseRobotsTxt(r)
+		rules = robotsTXT
+		ws.rlMu.Lock()
+		if ex := ws.rlMap[cur.Host]; (ex == nil || ex.R == DefaultDelay) && rules.Rules["*"].Delay > 0 {
+			ws.rlMap[cur.Host] = NewRateLimiter(rules.Rules["*"].Delay)
+		} else if ex == nil {
+			ws.rlMap[cur.Host] = NewRateLimiter(DefaultDelay)
+		}
+		ws.rlMu.Unlock()
+	}
+		
+	ws.scrapeThroughtSitemap(ws.globalCtx, cur, rules, depth, localDepth)
+}
+
 func (ws *webScraper) haveSitemap(url *url.URL) ([]string, error) {
 	sitemapURL := url.String()
 	if !strings.Contains(sitemapURL, sitemap) {
@@ -92,7 +108,7 @@ func getSitemapURLs(URL string, cli *http.Client, limiter int) ([]string, error)
 	return decodeSitemap(bytes.NewReader(bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))), limiter)
 }
 
-func (ws *webScraper) scrapeThroughtSitemap(ctx context.Context, current *url.URL, rules *parser.RobotsTxt, d int) {
+func (ws *webScraper) scrapeThroughtSitemap(ctx context.Context, current *url.URL, rules *parser.RobotsTxt, dg, dl int) {
 	if urls, err := ws.haveSitemap(current); err == nil && len(urls) > 0 {
 		for _, link := range urls {
 			if ws.checkContext(ctx, current.String()) {
@@ -104,6 +120,11 @@ func (ws *webScraper) scrapeThroughtSitemap(ctx context.Context, current *url.UR
 				ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error parsing link: %v", err))
 				continue
 			}
+			n, err := normalizeUrl(link)
+			if err != nil {
+				continue
+			}
+
 			same := isSameOrigin(parsed, current)
 
 			if !same && ws.cfg.OnlySameDomain {
@@ -113,6 +134,11 @@ func (ws *webScraper) scrapeThroughtSitemap(ctx context.Context, current *url.UR
 			rls := rules
 			if !same {
 				rls = nil
+			}
+
+			localVisDepth := 0
+			if _, v := ws.visited.Load(n); v {
+				localVisDepth = dl + 1
 			}
 
 			ws.pool.Submit(func() {
@@ -126,7 +152,7 @@ func (ws *webScraper) scrapeThroughtSitemap(ctx context.Context, current *url.UR
 					ws.rlMap[parsed.Host] = NewRateLimiter(DefaultDelay)
 				}
 				ws.rlMu.Unlock()
-				ws.ScrapeWithContext(c, parsed, rls, d+1)
+				ws.ScrapeWithContext(c, parsed, rls, dg+1, localVisDepth)
 			})
 		}
 	}

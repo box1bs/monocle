@@ -12,7 +12,6 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"time"
 )
@@ -49,6 +48,7 @@ type ConfigData struct {
 	StartURLs     	[]string
 	CacheCap 		int
 	Depth       	int
+	MaxVisitedDeep 	int
 	MaxLinksInPage 	int
 	OnlySameDomain  bool
 }
@@ -100,7 +100,7 @@ func (ws *webScraper) Run() {
 			rl := NewRateLimiter(DefaultDelay)
 			ws.rlMap[parsed.Host] = rl
 			ws.rlMu.Unlock()
-			ws.ScrapeWithContext(ctx, parsed, nil, 0)
+			ws.ScrapeWithContext(ctx, parsed, nil, 0, 0)
 		})
 	}
 	ws.pool.Wait()
@@ -108,85 +108,42 @@ func (ws *webScraper) Run() {
 	ws.pool.Stop()
 }
 
-func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL, rules *parser.RobotsTxt, depth int) {
+type cacheData struct {
+	html 		string
+	scrapedD 	int
+}
+
+func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL, rules *parser.RobotsTxt, depth, visDeep int) {
     if ws.checkContext(ctx, currentURL.String()) {return}
 
     if depth >= ws.cfg.Depth {
         return
     }
 
-	if strings.HasSuffix(currentURL.String(), ".xml") && strings.Contains(currentURL.String(), "sitemap") {
-		ws.scrapeThroughtSitemap(ctx, currentURL, rules, depth)
-		return
-	}
+	ws.fetchPageRulesAndOffers(ctx, currentURL, rules, depth, visDeep)
 
     normalized, err := normalizeUrl(currentURL.String())
     if err != nil {
         return
     }
     
-    if _, loaded := ws.visited.LoadOrStore(normalized, struct{}{}); loaded {
-        return
-    }
-	
-	if r, err := parser.FetchRobotsTxt(ctx, currentURL.String(), ws.client); r != "" && err == nil {
-		robotsTXT := parser.ParseRobotsTxt(r)
-		rules = robotsTXT
-		ws.rlMu.Lock()
-		if ex := ws.rlMap[currentURL.Host]; (ex == nil || ex.R == DefaultDelay) && rules.Rules["*"].Delay > 0 {
-			ws.rlMap[currentURL.Host] = NewRateLimiter(rules.Rules["*"].Delay)
-		} else if ex == nil {
-			ws.rlMap[currentURL.Host] = NewRateLimiter(DefaultDelay)
-		}
-		ws.rlMu.Unlock()
-	}
-		
-	if urls, err := ws.haveSitemap(currentURL); err == nil && len(urls) > 0 {
-		ws.scrapeThroughtSitemap(ctx, currentURL, rules, depth)
-	}
-
-	ws.rlMu.RLock()
-	rl := ws.rlMap[currentURL.Host]
-	ws.rlMu.RUnlock()
-    doc, err := ws.getHTML(currentURL.String(), rl, numOfTries)
-    if err != nil || doc == "" {
-		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error parsing page: %s, with error: %v\n", currentURL, err))
-        return
-    }
-
-	id := sha256.Sum256([]byte(normalized))
-    document := &model.Document{
-        Id: id,
-        URL: currentURL.String(),
-    }
-
-	c, cancel := context.WithTimeout(ctx, deadlineTime)
-	defer cancel()
-    links, passages := ws.parseHTMLStream(c, doc, currentURL, rules)
-	
-	if crawled, err := ws.idx.IsCrawledContent(document.Id, passages); err != nil || crawled {
+	links := []*linkToken{}
+    if _, loaded := ws.visited.LoadOrStore(normalized, struct{}{}); loaded && visDeep >= ws.cfg.MaxVisitedDeep {
 		return
-	}
-
-	fullText := strings.Builder{}
-	for _, passage := range passages {
-		fullText.WriteString(passage.Text)
-	}
-	
-	var ok bool
-	select {
-	case document.WordVec, ok = <-ws.putDocReq(fullText.String(), ws.globalCtx):
-		if !ok {
-			ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.CRITICAL_ERROR, "error vectorizing document for page: %s\n", currentURL))
+    } else if !loaded {
+		links, err = ws.fetchHTMLcontent(currentURL, ctx, normalized, rules, depth, visDeep)
+		if err != nil {
 			return
 		}
-	case <-ws.globalCtx.Done():
-		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.CRITICAL_ERROR, "timeout vectorizing document for page: %s\n", currentURL))
-		return
-	}
-	
-    if err := ws.idx.HandleDocumentWords(document, passages); err != nil {
-		return
+	} else if loaded {
+		if v := ws.lru.Get(sha256.Sum256([]byte(normalized))); v != nil {
+			cached := v.(cacheData)
+			c, cancel := context.WithTimeout(ctx, deadlineTime)
+			defer cancel()
+			links, _ = ws.parseHTMLStream(c, cached.html, currentURL, rules, depth, visDeep)
+		} else {
+			return
+		}
 	}
 	
 	if len(links) == 0 {
@@ -213,7 +170,11 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
 				ws.rlMap[link.link.Host] = NewRateLimiter(DefaultDelay)
 			}
 			ws.rlMu.Unlock()
-			ws.ScrapeWithContext(c, link.link, rls, depth+1)
+			visD := 0
+			if link.visited {
+				visD = visDeep + 1
+			}
+			ws.ScrapeWithContext(c, link.link, rls, depth+1, visD)
 		})
     }
 }

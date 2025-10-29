@@ -3,6 +3,7 @@ package scraper
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,13 +20,62 @@ import (
 type linkToken struct {
 	link 		*url.URL
 	sameDomain 	bool
+	visited 	bool
 }
 
-func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent string, baseURL *url.URL, rules *parser.RobotsTxt) (links []*linkToken, pasages []model.Passage) {
+func (ws *webScraper) fetchHTMLcontent(cur *url.URL, ctx context.Context, norm string, rls *parser.RobotsTxt, gd, vd int) ([]*linkToken, error) {
+	ws.rlMu.RLock()
+	rl := ws.rlMap[cur.Host]
+	ws.rlMu.RUnlock()
+	doc, err := ws.getHTML(cur.String(), rl, numOfTries)
+    if err != nil || doc == "" {
+		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error parsing page: %s, with error: %v\n", cur, err))
+        return nil, fmt.Errorf("error getting html: %v for page: %s", err, cur)
+    }
+	
+	hashed := sha256.Sum256([]byte(norm))
+    document := &model.Document{
+        Id: hashed,
+        URL: cur.String(),
+    }
+
+	c, cancel := context.WithTimeout(ctx, deadlineTime)
+	defer cancel()
+    links, passages := ws.parseHTMLStream(c, doc, cur, rls, gd, vd)
+	if len(links) == ws.cfg.MaxLinksInPage {
+		ws.lru.Put(hashed, cacheData{html: doc, scrapedD: gd})
+	}
+	
+	if crawled, err := ws.idx.IsCrawledContent(document.Id, passages); err != nil || crawled {
+		return nil, fmt.Errorf("already scraped")
+	}
+
+	fullText := strings.Builder{}
+	for _, passage := range passages {
+		fullText.WriteString(passage.Text)
+	}
+	
+	var ok bool
+	select {
+	case document.WordVec, ok = <-ws.putDocReq(fullText.String(), ws.globalCtx):
+		if !ok {
+			ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.CRITICAL_ERROR, "error vectorizing document for page: %s\n", cur))
+			return nil, fmt.Errorf("error vectoriing document for page: %s", cur)
+		}
+	case <-ws.globalCtx.Done():
+		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.CRITICAL_ERROR, "timeout vectorizing document for page: %s\n", cur))
+		return nil, fmt.Errorf("context canceled")
+	}
+
+	return links, ws.idx.HandleDocumentWords(document, passages)
+}
+
+func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent string, baseURL *url.URL, rules *parser.RobotsTxt, currentDeep, visDepth int) (links []*linkToken, pasages []model.Passage) {
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
 	var tagStack [][2]byte
 	var garbageTagStack []string
 	links = make([]*linkToken, 0, ws.cfg.MaxLinksInPage)
+	visit := make([]*linkToken, 0)
 
 	tokenCount := 0
 	const checkContextEvery = 10
@@ -35,6 +85,13 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 		if tokenCount%checkContextEvery == 0 {
 			select {
 			case <-ctx.Done():
+				l := len(links)
+				if l != ws.cfg.MaxLinksInPage {
+					v := len(visit)
+					for i := 0; i < ws.cfg.MaxLinksInPage - l && i < v; i++ {
+						links = append(links, visit[i])
+					}
+				}
 				return
 			default:
 			}
@@ -85,9 +142,6 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 								ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error normalizing url: %s, with error: %v", link, err))
 								break
 							}
-							if _, vis := ws.visited.Load(normalized); vis {
-								break
-							}
 							uri, err := url.Parse(link)
 							if err != nil {
 								ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error parsing link: %v", err))
@@ -99,6 +153,15 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 								}
 							}
 							same := isSameOrigin(uri, baseURL)
+							if _, vis := ws.visited.Load(normalized); vis {
+								if visDepth < ws.cfg.MaxVisitedDeep {
+									if v := ws.lru.GetWithoutShift(sha256.Sum256([]byte(normalized))); v == nil || v.(cacheData).scrapedD > currentDeep {
+										break
+									}
+									visit = append(visit, &linkToken{link: uri, sameDomain: same, visited: true})
+								}
+								break
+							}
 							links = append(links, &linkToken{link: uri, sameDomain: same})
 						}
 						break
@@ -141,6 +204,13 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 				pasages = append(pasages, model.NewTypeTextObj[model.Passage]('b', text, 0))
 			}
 
+		}
+	}
+	l := len(links)
+	if l != ws.cfg.MaxLinksInPage {
+		v := len(visit)
+		for i := 0; i < ws.cfg.MaxLinksInPage - l && i < v; i++ {
+			links = append(links, visit[i])
 		}
 	}
 	return

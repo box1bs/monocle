@@ -79,6 +79,7 @@ func (idx *indexer) Index(config *configs.ConfigData, global context.Context) {
 		StartURLs:     	config.BaseURLs,
 		CacheCap: 		config.CacheCap,	
 		Depth:       	config.MaxDepth,
+		MaxVisitedDeep: config.MaxVisitedDepth,
 		MaxLinksInPage: config.MaxLinksInPage,
 		OnlySameDomain: config.OnlySameDomain,
 	}, idx.logger, wp, idx, global, idx.vectorizer.PutDocQuery).Run()

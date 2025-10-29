@@ -44,7 +44,18 @@ func (lru *LRUCache) Get(key [32]byte) any {
 		return v.value
 	}
 
-	return ""
+	return nil
+}
+
+func (lru *LRUCache) GetWithoutShift(key [32]byte) any {
+	lru.mu.Lock()
+	defer lru.mu.Unlock()
+
+	if v, ex := lru.mp[key]; ex {
+		return v.value
+	}
+
+	return nil
 }
 
 func (lru *LRUCache) Put(key [32]byte, value any) {
