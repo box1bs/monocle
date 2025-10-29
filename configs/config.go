@@ -11,6 +11,7 @@ type ConfigData struct {
 	ErrorLogPath  			string   	`json:"error_log_path" validate:"required"` // use '-' for stderr
 	IndexPath     			string   	`json:"index_path" validate:"required"`
 	LogChannelSize 			int      	`json:"log_channel_size" validate:"min=1000,max=50000"`
+	CacheCap 				int      	`json:"cache_cap" validate:"min=10,max=1000"`
 	TickerTimeMilliseconds  int  		`json:"ticker_time_milliseconds" validate:"min=500,max=10000"`
 	WorkersCount   			int      	`json:"worker_count" validate:"min=50,max=2000"`
 	TasksCount     			int      	`json:"task_count" validate:"min=100,max=10000"`

@@ -77,6 +77,7 @@ func (idx *indexer) Index(config *configs.ConfigData, global context.Context) {
 
 	scraper.NewScraper(vis, &scraper.ConfigData{
 		StartURLs:     	config.BaseURLs,
+		CacheCap: 		config.CacheCap,	
 		Depth:       	config.MaxDepth,
 		MaxLinksInPage: config.MaxLinksInPage,
 		OnlySameDomain: config.OnlySameDomain,

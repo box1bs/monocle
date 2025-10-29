@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"regexp"
 
+	"github.com/box1bs/monocle/internal/app/scraper/lruCache"
 	"github.com/box1bs/monocle/internal/model"
 	"github.com/box1bs/monocle/pkg/logger"
 	"github.com/box1bs/monocle/pkg/parser"
@@ -36,6 +37,7 @@ type webScraper struct {
 	cfg 		  	*ConfigData
 	log 			*logger.Logger
 	rlMu         	*sync.RWMutex
+	lru 			*lrucache.LRUCache
 	pool           	workerPool
 	idx 			indexer
 	globalCtx		context.Context
@@ -45,6 +47,7 @@ type webScraper struct {
 
 type ConfigData struct {
 	StartURLs     	[]string
+	CacheCap 		int
 	Depth       	int
 	MaxLinksInPage 	int
 	OnlySameDomain  bool
@@ -73,6 +76,7 @@ func NewScraper(mp *sync.Map, cfg *ConfigData, l *logger.Logger, wp workerPool, 
 		cfg: 			cfg,
 		log:			l,
 		rlMu:           new(sync.RWMutex),
+		lru: 			lrucache.NewLRUCache(cfg.CacheCap),
 		pool:           wp,
 		idx: 			idx,
 		globalCtx:		c,
