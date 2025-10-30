@@ -14,7 +14,7 @@ import (
 	"golang.org/x/net/html/charset"
 )
 
-func (ws *webScraper) fetchPageRulesAndOffers(ctx context.Context, cur *url.URL, rules *parser.RobotsTxt, depth, localDepth int) {
+func (ws *WebScraper) fetchPageRulesAndOffers(ctx context.Context, cur *url.URL, rules *parser.RobotsTxt, depth, localDepth int) {
 	if r, err := parser.FetchRobotsTxt(ctx, cur.String(), ws.client); r != "" && err == nil {
 		robotsTXT := parser.ParseRobotsTxt(r)
 		rules = robotsTXT
@@ -30,7 +30,7 @@ func (ws *webScraper) fetchPageRulesAndOffers(ctx context.Context, cur *url.URL,
 	ws.scrapeThroughtSitemap(ws.globalCtx, cur, rules, depth, localDepth)
 }
 
-func (ws *webScraper) haveSitemap(url *url.URL) ([]string, error) {
+func (ws *WebScraper) haveSitemap(url *url.URL) ([]string, error) {
 	sitemapURL := url.String()
 	if !strings.Contains(sitemapURL, sitemap) {
 		sitemapURL = strings.TrimSuffix(url.String(), "/")
@@ -75,7 +75,7 @@ func decodeSitemap(r io.Reader, limiter int) ([]string, error) {
 	return urls, nil
 }
 
-func (ws *webScraper) processSitemap(baseURL *url.URL, sitemapURL string) ([]string, error) {
+func (ws *WebScraper) processSitemap(baseURL *url.URL, sitemapURL string) ([]string, error) {
 	sitemap, err := getSitemapURLs(sitemapURL, ws.client, ws.cfg.MaxLinksInPage)
 	if err != nil {
 		return nil, err
@@ -108,7 +108,7 @@ func getSitemapURLs(URL string, cli *http.Client, limiter int) ([]string, error)
 	return decodeSitemap(bytes.NewReader(bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))), limiter)
 }
 
-func (ws *webScraper) scrapeThroughtSitemap(ctx context.Context, current *url.URL, rules *parser.RobotsTxt, dg, dl int) {
+func (ws *WebScraper) scrapeThroughtSitemap(ctx context.Context, current *url.URL, rules *parser.RobotsTxt, dg, dl int) {
 	if urls, err := ws.haveSitemap(current); err == nil && len(urls) > 0 {
 		for _, link := range urls {
 			if ws.checkContext(ctx, current.String()) {
@@ -137,8 +137,10 @@ func (ws *webScraper) scrapeThroughtSitemap(ctx context.Context, current *url.UR
 			}
 
 			localVisDepth := 0
-			if _, v := ws.visited.Load(n); v {
+			if _, v := ws.visited.Load(n); v && dl < ws.cfg.MaxVisitedDeep {
 				localVisDepth = dl + 1
+			} else if v {
+				continue
 			}
 
 			ws.pool.Submit(func() {

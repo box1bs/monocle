@@ -161,13 +161,22 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 		close(done)
 	}()
 	
+	vec := []float64{}
 	c, cancel := context.WithTimeout(context.Background(), 5 * time.Second)
 	defer cancel()
-	vec, ok := <-s.vectorizer.PutDocQuery(query, c)
-	if !ok {
-		s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.CRITICAL_ERROR, "error vectorozing query"))
+	select {
+	case v, ok := <-s.vectorizer.PutDocQuery(query, c):
+		if !ok {
+			s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.CRITICAL_ERROR, "error vectorozing query"))
+			return nil
+		}
+		vec = v[0]
+
+	case <-c.Done():
+		s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.CRITICAL_ERROR, "vectorizing timeout"))
 		return nil
 	}
+	
 	
 	s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.DEBUG, "result len: %d", len(result)))
 	
@@ -178,13 +187,13 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 		r := rank[doc.Id]
 		sumCosW := 0.0
 		for _, v := range doc.WordVec {
-			sumCosW += calcCosineSimilarity(v, vec[0])
+			sumCosW += calcCosineSimilarity(v, vec)
 		}
 		length := float64(len(doc.WordVec))
 		r.WordsCos = sumCosW / length
 		sumDistance := 0.0
 		for _, v := range doc.WordVec {
-			sumDistance += calcEuclidianDistance(v, vec[0])
+			sumDistance += calcEuclidianDistance(v, vec)
 		}
 		r.Dpq = sumDistance / length
 		rank[doc.Id] = r

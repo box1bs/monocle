@@ -28,6 +28,7 @@ func (v *Vectorizer) PutDocQuery(t string, ctx context.Context) <- chan [][]floa
 	case v.docQueue <- reqBody{Text: t, out: resChan}:
 		return resChan
 	case <-ctx.Done():
+		close(resChan)
 		return resChan
 	}
 }

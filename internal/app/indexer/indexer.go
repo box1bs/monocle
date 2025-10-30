@@ -36,6 +36,7 @@ type repository interface {
 }
 
 type indexer struct {
+	spider 		*scraper.WebScraper
 	stemmer 	*textHandling.EnglishStemmer
 	sc 			*spellChecker.SpellChecker
 	logger 		*logger.Logger
@@ -45,44 +46,46 @@ type indexer struct {
 	repository 	repository
 }
 
-func NewIndexer(repo repository,vec *textHandling.Vectorizer, logger *logger.Logger) (*indexer, error) {
-	return &indexer{
+func NewIndexer(repo repository, vec *textHandling.Vectorizer, log *logger.Logger, config *configs.ConfigData) (*indexer, error) {
+	idx := &indexer{
 		vectorizer: vec,
 		stemmer:   	textHandling.NewEnglishStemmer(),
 		mu: 		new(sync.RWMutex),
 		repository: repo,
-		logger:    	logger,
-	}, nil
-}
-
-func (idx *indexer) Index(config *configs.ConfigData, global context.Context) {
-	vis := &sync.Map{}
-	idx.repository.LoadVisitedUrls(vis)
-	defer idx.repository.SaveVisitedUrls(vis)
-	defer idx.repository.FlushAll()
-	
-	wp := workerPool.NewWorkerPool(config.WorkersCount, config.TasksCount, global, idx.logger)
-	idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.INFO, "worker pool initialized"))
+		logger:    	log,
+	}
 	
 	idx.sc = spellChecker.NewSpellChecker(config.MaxTypo, config.NGramCount)
 	idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.INFO, "spell checker initialized"))
 
 	var err error
 	idx.pageRank, err = idx.repository.LoadPageRank()
-	defer idx.repository.SavePageRank(idx.pageRank)
 	if err != nil {
 		idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.CRITICAL_ERROR, "db error: %v", err))
-		return
+		return nil, err
 	}
+	return idx, nil
+}
 
-	scraper.NewScraper(vis, &scraper.ConfigData{
+func (idx *indexer) Index(config *configs.ConfigData, global context.Context) error {
+	defer idx.repository.SavePageRank(idx.pageRank)
+	vis := &sync.Map{}
+	if err := idx.repository.LoadVisitedUrls(vis); err != nil {
+		return err
+	}
+	defer idx.repository.SaveVisitedUrls(vis)
+	defer idx.repository.FlushAll()
+
+	idx.spider = scraper.NewScraper(vis, &scraper.ConfigData{
 		StartURLs:     	config.BaseURLs,
 		CacheCap: 		config.CacheCap,	
 		Depth:       	config.MaxDepth,
 		MaxVisitedDeep: config.MaxVisitedDepth,
 		MaxLinksInPage: config.MaxLinksInPage,
 		OnlySameDomain: config.OnlySameDomain,
-	}, idx.logger, wp, idx, global, idx.vectorizer.PutDocQuery).Run()
+	}, idx.logger, workerPool.NewWorkerPool(config.WorkersCount, config.TasksCount, global, idx.logger), idx, global, idx.vectorizer.PutDocQuery)
+	idx.spider.Run()
+	return nil
 }
 
 func (idx *indexer) GetAVGLen() (float64, error) {

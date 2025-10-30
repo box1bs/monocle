@@ -23,7 +23,7 @@ type linkToken struct {
 	visited 	bool
 }
 
-func (ws *webScraper) fetchHTMLcontent(cur *url.URL, ctx context.Context, norm string, rls *parser.RobotsTxt, gd, vd int) ([]*linkToken, error) {
+func (ws *WebScraper) fetchHTMLcontent(cur *url.URL, ctx context.Context, norm string, rls *parser.RobotsTxt, gd, vd int) ([]*linkToken, error) {
 	ws.rlMu.RLock()
 	rl := ws.rlMap[cur.Host]
 	ws.rlMu.RUnlock()
@@ -70,7 +70,7 @@ func (ws *webScraper) fetchHTMLcontent(cur *url.URL, ctx context.Context, norm s
 	return links, ws.idx.HandleDocumentWords(document, passages)
 }
 
-func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent string, baseURL *url.URL, rules *parser.RobotsTxt, currentDeep, visDepth int) (links []*linkToken, pasages []model.Passage) {
+func (ws *WebScraper) parseHTMLStream(ctx context.Context, htmlContent string, baseURL *url.URL, rules *parser.RobotsTxt, currentDeep, visDepth int) (links []*linkToken, pasages []model.Passage) {
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
 	var tagStack [][2]byte
 	var garbageTagStack []string
@@ -216,7 +216,7 @@ func (ws *webScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 	return
 }
 
-func (ws *webScraper) getHTML(URL string, rl *rateLimiter, try int) (string, error) {
+func (ws *WebScraper) getHTML(URL string, rl *rateLimiter, try int) (string, error) {
 	if try <= 0 {
 		return "", fmt.Errorf("max amount of tries wsa reached")
 	}

@@ -20,6 +20,7 @@ func NewLRUCache(cap int) *LRUCache {
 	head.next = tail
 	tail.prev = head
 	return &LRUCache{
+		mp: 		make(map[[32]byte]*node),
 		head:     	head,
 		tail:     	tail,
 		mu: 		new(sync.Mutex),

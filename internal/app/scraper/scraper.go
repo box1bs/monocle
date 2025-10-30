@@ -29,7 +29,7 @@ type workerPool interface {
 	Stop()
 }
 
-type webScraper struct {
+type WebScraper struct {
 	client         	*http.Client
 	visited        	*sync.Map
 	mu 				*sync.Mutex
@@ -61,8 +61,8 @@ const (
 	numOfTries = 4 // если кто то решил поменять это на 0, чтож, удачи
 )
 
-func NewScraper(mp *sync.Map, cfg *ConfigData, l *logger.Logger, wp workerPool, idx indexer, c context.Context, putDocReq func(string, context.Context) <-chan [][]float64) *webScraper {
-	return &webScraper{
+func NewScraper(mp *sync.Map, cfg *ConfigData, l *logger.Logger, wp workerPool, idx indexer, c context.Context, putDocReq func(string, context.Context) <-chan [][]float64) *WebScraper {
+	return &WebScraper{
 		client: &http.Client{
 			Timeout: deadlineTime,
 			Transport: &http.Transport{
@@ -85,7 +85,7 @@ func NewScraper(mp *sync.Map, cfg *ConfigData, l *logger.Logger, wp workerPool, 
 	}
 }
 
-func (ws *webScraper) Run() {
+func (ws *WebScraper) Run() {
 	defer ws.putDownLimiters()
 	for _, uri := range ws.cfg.StartURLs {
 		parsed, err := url.Parse(uri)
@@ -113,7 +113,7 @@ type cacheData struct {
 	scrapedD 	int
 }
 
-func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL, rules *parser.RobotsTxt, depth, visDeep int) {
+func (ws *WebScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL, rules *parser.RobotsTxt, depth, visDeep int) {
     if ws.checkContext(ctx, currentURL.String()) {return}
 
     if depth >= ws.cfg.Depth {
@@ -179,7 +179,7 @@ func (ws *webScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
     }
 }
 
-func (ws *webScraper) putDownLimiters() {
+func (ws *WebScraper) putDownLimiters() {
 	ws.rlMu.Lock()
 	defer ws.rlMu.Unlock()
 	for _, limiter := range ws.rlMap {
@@ -187,7 +187,7 @@ func (ws *webScraper) putDownLimiters() {
 	}
 }
 
-func (ws *webScraper) checkContext(ctx context.Context, currentURL string) bool {
+func (ws *WebScraper) checkContext(ctx context.Context, currentURL string) bool {
 	select {
 		case <-ctx.Done():
 			ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "context canceled while parsing page: %s\n", currentURL))

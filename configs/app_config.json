@@ -38,7 +38,7 @@
     "error_log_path" : "C:/Projects/monocle/logs/errors.log",
     "index_path" : "C:/Projects/monocle/data/index",
     "log_channel_size" : 10000,
-    "cache_cap": 1000,
+    "cache_cap": 10000,
     "ticker_time_milliseconds" : 1000,
     "worker_count" : 40,
     "task_count" : 1000,

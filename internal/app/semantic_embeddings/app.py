@@ -116,4 +116,4 @@ def get_ranked():
     return jsonify({'rel': np.asarray(resp).tolist()})
 
 if __name__ == '__main__':
-    app.run(debug=True, port=50920)
+    app.run(debug=False, port=50920)

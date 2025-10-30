@@ -22,6 +22,7 @@ import (
 func main() {
 	var (
 		configFile = flag.String("config", "configs/app_config.json", "Path to configuration file")
+		indexFlag = flag.Bool("i", false, "scrape or not")
 	)
 	flag.Parse()
 
@@ -70,11 +71,13 @@ func main() {
 
 	vec := textHandling.NewVectorizer(ctx, cfg.WorkersCount, cfg.TickerTimeMilliseconds)
 	defer vec.Close()
-	i, err := indexer.NewIndexer(ir, vec, log)
+	i, err := indexer.NewIndexer(ir, vec, log, cfg)
 	if err != nil {
 		panic(err)
 	}
-	i.Index(cfg, ctx)
+	if *indexFlag {
+		i.Index(cfg, ctx)
+	}
 
 	count, err := ir.GetDocumentsCount()
 	if err != nil {
@@ -82,7 +85,7 @@ func main() {
 	}
 
 	log.Write(logger.NewMessage(logger.MAIN_LAYER, logger.INFO, "index built with %d documents", count))
-	fmt.Printf("Index built with %d documents. Enter search queries (Ctrl+C to exit):\n", count)
+	fmt.Printf("Index built with %d documents. Enter search queries (q to exit):\n", count)
 
 	s := searcher.NewSearcher(log, i, ir, vec)
 
