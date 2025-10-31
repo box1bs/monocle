@@ -67,7 +67,7 @@ func (v *Vectorizer) vectorize(reqData []reqBody) {
 	}
 }
 
-func NewVectorizer(ctx context.Context, cap int, tickerTime int) *Vectorizer {
+func NewVectorizer(cap int, tickerTime int) *Vectorizer {
 	v := &Vectorizer{
 		client: &http.Client{},
 		docQueue: make(chan reqBody, cap),
@@ -77,31 +77,33 @@ func NewVectorizer(ctx context.Context, cap int, tickerTime int) *Vectorizer {
 		t := time.NewTicker(time.Duration(tickerTime) * time.Millisecond)
 		defer t.Stop()
 		for range t.C {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				if len(v.docQueue) < 1 {
-					continue
-				}
-				batchSize := len(v.docQueue)
-				reqData := make([]reqBody, 0, batchSize)
-				for range batchSize {
-					select {
-					case <-ctx.Done():
+			if len(v.docQueue) == 0 {
+				continue
+			}
+			batchSize := len(v.docQueue)
+			reqData := make([]reqBody, 0, batchSize)
+			for range batchSize {
+				select {
+				case v, ok := <-v.docQueue:
+					if !ok {
 						return
-					case v, ok := <-v.docQueue:
-						if !ok {
-							return
-						}
-						reqData = append(reqData, v)
-					default:
 					}
+					reqData = append(reqData, v)
+				default:
 				}
-				if len(reqData) == 0 {
-					continue
+			}
+			if len(reqData) == 0 {
+				continue
+			}
+			v.vectorize(reqData)
+			//идея t в том чтобы между запросами проходила секунда, если t накапливается, то это условие не выполняется
+			drain:
+			for {
+				select{
+				case <-t.C:
+				default:
+					break drain
 				}
-				v.vectorize(reqData)
 			}
 		}
 	}()

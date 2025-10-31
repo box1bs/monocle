@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 
+	"github.com/box1bs/monocle/internal/app/indexer/textHandling"
 	"github.com/box1bs/monocle/internal/model"
 	"github.com/box1bs/monocle/pkg/logger"
 )
@@ -16,10 +17,10 @@ func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Pa
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	allWords := []string{}
+	allTokens := []string{}
 
 	for _, passage := range passages {
-		words, stemmed, err := idx.stemmer.TokenizeAndStem(passage.Text)
+		orig, stemmed, err := idx.stemmer.TokenizeAndStem(passage.Text)
 		if err != nil {
 			return err
 		}
@@ -28,24 +29,27 @@ func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Pa
 		}
 		doc.WordCount += len(stemmed)
 
-		allWords = append(allWords, words...)
+		allTokens = append(allTokens, orig...)
 		for _, w := range stemmed {
-			stem[w]++
-			pos[w] = append(pos[w], model.NewTypeTextObj[model.Position](passage.Type, "", i))
+			if w.Type == textHandling.NUMBER {
+				continue
+			}
+			stem[w.Value]++
+			pos[w.Value] = append(pos[w.Value], model.NewTypeTextObj[model.Position](passage.Type, "", i))
 			i++
 		}
 	}
 
-	if err := idx.repository.IndexNGrams(allWords, idx.sc.NGramCount); err != nil {
+	if err := idx.repository.SaveDocument(doc); err != nil {
+		idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.CRITICAL_ERROR, "error saving document: %v", err))
+		return err
+	}
+	if err := idx.repository.IndexNGrams(allTokens, idx.sc.NGramCount); err != nil {
 		idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.CRITICAL_ERROR, "error indexing ngrams: %v", err))
 		return err
 	}
 	if err := idx.repository.IndexDocumentWords(doc.Id, stem, pos); err != nil {
 		idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.CRITICAL_ERROR, "error indexing document words: %v", err))
-		return err
-	}
-	if err := idx.repository.SaveDocument(doc); err != nil {
-		idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.CRITICAL_ERROR, "error saving document: %v", err))
 		return err
 	}
 
@@ -57,9 +61,10 @@ func (idx *indexer) HandleTextQuery(text string) ([]string, []map[[32]byte]model
 	defer idx.mu.RUnlock()
 	reverthIndex := []map[[32]byte]model.WordCountAndPositions{}
 	words, stemmed, err := idx.stemmer.TokenizeAndStem(text)
+	stemmedTokens := []string{}
 
 	for i, lemma := range stemmed {
-		documents, err := idx.repository.GetDocumentsByWord(lemma)
+		documents, err := idx.repository.GetDocumentsByWord(lemma.Value)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -75,15 +80,16 @@ func (idx *indexer) HandleTextQuery(text string) ([]string, []map[[32]byte]model
 				return nil, nil, err
 			}
 			stemmed[i] = stem[0]
-			documents, err = idx.repository.GetDocumentsByWord(stem[0])
+			documents, err = idx.repository.GetDocumentsByWord(stem[0].Value)
 			if err != nil {
 				return nil, nil, err
 			}
 		}
+		stemmedTokens = append(stemmedTokens, stemmed[i].Value)
 		reverthIndex = append(reverthIndex, documents)
 	}
 
-	return stemmed, reverthIndex, err
+	return stemmedTokens, reverthIndex, err
 }
 
 func (idx *indexer) IsCrawledContent(id [32]byte, content []model.Passage) (bool, error) {

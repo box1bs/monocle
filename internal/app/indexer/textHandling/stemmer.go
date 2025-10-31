@@ -144,18 +144,18 @@ func (s *EnglishStemmer) measure(word string) int {
     return m
 }
 
-func (s *EnglishStemmer) TokenizeAndStem(text string) ([]string, []string, error) {
+func (s *EnglishStemmer) TokenizeAndStem(text string) ([]string, []token, error) {
 	tokens := s.tokenizer.entityTokenize(text)
 	wordTokens := []string{}
-	stemmedTokens := []string{}
-	for _, token := range tokens {
-		if token.Type == WORD && len(token.Value) > 0 {
-			if stemmed := s.stem(token.Value); stemmed != "" { // пофиксить: не игнорировать стоп слова, их вполне можно использовать как кандидаты для замены, ну или нет, т.к. у них больше вероятность по цепям маркова
-				wordTokens = append(wordTokens, token.Value)
-				stemmedTokens = append(stemmedTokens, stemmed)
+	stemmedTokens := []token{}
+	for _, t := range tokens {
+		if t.Type == WORD && len(t.Value) > 0 {
+			if stemmed := s.stem(t.Value); stemmed != "" { // пофиксить: не игнорировать стоп слова, их вполне можно использовать как кандидаты для замены, ну или нет, т.к. у них больше вероятность по цепям маркова
+				wordTokens = append(wordTokens, t.Value)
+				stemmedTokens = append(stemmedTokens, token{Type: WORD, Value: stemmed})
 			}
-		} else if token.Type == ALPHANUMERIC || token.Type == NUMBER || token.Type == EMAIL_ADDR || token.Type == URL_ADDR {
-			stemmedTokens = append(stemmedTokens, token.Value)
+		} else if t.Type == ALPHANUMERIC || t.Type == NUMBER || t.Type == EMAIL_ADDR || t.Type == URL_ADDR {
+			stemmedTokens = append(stemmedTokens, t)
 		}
 	}
 

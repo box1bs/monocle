@@ -237,7 +237,7 @@ func (ws *WebScraper) getHTML(URL string, rl *rateLimiter, try int) (string, err
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if resp.StatusCode == http.StatusTooManyRequests {
+		if resp.StatusCode == http.StatusTooManyRequests && !ws.checkContext(ws.globalCtx, URL) {
 			<-time.After(deadlineTime)
 			return ws.getHTML(URL, rl, try-1)
 		} else {

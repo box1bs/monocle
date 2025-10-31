@@ -22,7 +22,6 @@ import (
 func main() {
 	var (
 		configFile = flag.String("config", "configs/app_config.json", "Path to configuration file")
-		indexFlag = flag.Bool("i", false, "scrape or not")
 	)
 	flag.Parse()
 
@@ -69,15 +68,13 @@ func main() {
 		//os.Exit(1)
 	}()
 
-	vec := textHandling.NewVectorizer(ctx, cfg.WorkersCount, cfg.TickerTimeMilliseconds)
+	vec := textHandling.NewVectorizer(cfg.WorkersCount, cfg.TickerTimeMilliseconds)
 	defer vec.Close()
 	i, err := indexer.NewIndexer(ir, vec, log, cfg)
 	if err != nil {
 		panic(err)
 	}
-	if *indexFlag {
-		i.Index(cfg, ctx)
-	}
+	i.Index(cfg, ctx)
 
 	count, err := ir.GetDocumentsCount()
 	if err != nil {

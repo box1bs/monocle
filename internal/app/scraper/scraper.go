@@ -130,11 +130,6 @@ func (ws *WebScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
 	links := []*linkToken{}
     if _, loaded := ws.visited.LoadOrStore(normalized, struct{}{}); loaded && visDeep >= ws.cfg.MaxVisitedDeep {
 		return
-    } else if !loaded {
-		links, err = ws.fetchHTMLcontent(currentURL, ctx, normalized, rules, depth, visDeep)
-		if err != nil {
-			return
-		}
 	} else if loaded {
 		if v := ws.lru.Get(sha256.Sum256([]byte(normalized))); v != nil {
 			cached := v.(cacheData)
@@ -142,6 +137,11 @@ func (ws *WebScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
 			defer cancel()
 			links, _ = ws.parseHTMLStream(c, cached.html, currentURL, rules, depth, visDeep)
 		} else {
+			return
+		}
+	} else {
+		links, err = ws.fetchHTMLcontent(currentURL, ctx, normalized, rules, depth, visDeep)
+		if err != nil {
 			return
 		}
 	}

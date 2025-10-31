@@ -93,9 +93,9 @@ type rankingResponse struct {
 	Relevances []float64 `json:"rel"`
 }
 
-func callRankAPI(conds [][32]byte, features map[[32]byte]requestRanking) (int, error) {
+func callRankAPI(ids [][32]byte, features map[[32]byte]requestRanking) (int, error) {
 	var requestBody []requestRanking
-	for _, c := range conds {
+	for _, c := range ids {
 		requestBody = append(requestBody, features[c])
 	}
 

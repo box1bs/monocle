@@ -56,7 +56,6 @@ func NewIndexer(repo repository, vec *textHandling.Vectorizer, log *logger.Logge
 	}
 	
 	idx.sc = spellChecker.NewSpellChecker(config.MaxTypo, config.NGramCount)
-	idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.INFO, "spell checker initialized"))
 
 	var err error
 	idx.pageRank, err = idx.repository.LoadPageRank()

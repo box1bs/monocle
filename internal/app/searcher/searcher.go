@@ -149,7 +149,7 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 					resultMu.Unlock()
 					continue
 				}
-				alreadyIncluded[doc.Id] = struct{}{}
+				alreadyIncluded[docID] = struct{}{}
 				result = append(result, doc)
 				resultMu.Unlock()
 			}
@@ -223,37 +223,37 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 	})
 
 	fl := filteredResult[:min(length, maxLen)]
-	
-	n := len(fl)
-	for i := range n / 10 {
-		condidates := map[[32]byte]requestRanking{}
-		list := [][32]byte{}
-		for j := range 10 {
-			conId := fl[10 * j + i].Id
-			condidates[conId] = rank[conId]
-			list = append(list, conId)
-		}
-		bestPos, err := callRankAPI(list, condidates)
-		if err != nil {
-			s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.CRITICAL_ERROR, "python server error: %v", err))
-			return fl
-		}
-		fl[i * 10 + bestPos], fl[i] = fl[i], fl[i * 10 + bestPos]
-	}
 
-	if endings := n % 10; endings != 0 {
+	const width = 10
+	n := len(fl)
+	iterVal := min(width, n)
+	for i := range iterVal {
 		condidates := map[[32]byte]requestRanking{}
 		list := [][32]byte{}
-		for j := range endings {
-			conId := fl[10 * n / 10 + j].Id
-			condidates[conId] = rank[conId]
+
+		for j := 0; ; j++ {
+			idx := j * width + i
+			if idx >= n {
+				break
+			}
+
+			condidateId := fl[idx].Id
+			condidates[condidateId] = rank[condidateId]
+			list = append(list, condidateId)
 		}
+
+		if len(list) <= 1 {
+			continue
+		}
+
 		bestPos, err := callRankAPI(list, condidates)
 		if err != nil {
 			s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.CRITICAL_ERROR, "python server error: %v", err))
-			return fl
+        	return fl
 		}
-		fl[n / 10 * 10 + bestPos], fl[n / 10] = fl[n / 10], fl[n / 10 * 10 + bestPos]
+
+		bestElIdx := bestPos * width + i
+		fl[i], fl[bestElIdx] = fl[bestElIdx], fl[i]
 	}
 
 	return fl
