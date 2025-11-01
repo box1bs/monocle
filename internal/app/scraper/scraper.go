@@ -58,7 +58,7 @@ const (
 	sitemap = "sitemap.xml"
  	crawlTime = 600 * time.Second
  	deadlineTime = 30 * time.Second
-	numOfTries = 4 // если кто то решил поменять это на 0, чтож, удачи
+	numOfTries = 2 // если кто то решил поменять это на 0, чтож, удачи
 )
 
 func NewScraper(mp *sync.Map, cfg *ConfigData, l *logger.Logger, wp workerPool, idx indexer, c context.Context, putDocReq func(string, context.Context) <-chan [][]float64) *WebScraper {
@@ -162,7 +162,6 @@ func (ws *WebScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
         }
 
         ws.pool.Submit(func() {
-			if ws.checkContext(ctx, currentURL.String()) {return}
 			c, cancel := context.WithTimeout(ws.globalCtx, crawlTime)
 			defer cancel()
 			ws.rlMu.Lock()

@@ -56,6 +56,9 @@ func (ir *IndexRepository) bytesToDocument(body []byte) (*model.Document, error)
 }
 
 func (ir *IndexRepository) SaveDocument(doc *model.Document) error {
+	ir.mu.Lock()
+	defer ir.mu.Unlock()
+	
 	docBytes, err := ir.documentToBytes(doc)
 	if err != nil {
 		return err
@@ -155,6 +158,9 @@ func (ir *IndexRepository) GetDocumentsCount() (int, error) {
 }
 
 func (ir *IndexRepository) CheckContent(id [32]byte, hash [32]byte) (bool, *model.Document, error) {
+	ir.mu.Lock()
+	defer ir.mu.Unlock()
+	
 	key := fmt.Appendf(nil, "%s/%s", hash, id)
 	var (
 		err error

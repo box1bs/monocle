@@ -79,6 +79,9 @@ func (idx *indexer) HandleTextQuery(text string) ([]string, []map[[32]byte]model
 			if err != nil {
 				return nil, nil, err
 			}
+			if stem[0].Value == "" { // если заменяется на стоп слово
+				continue
+			}
 			stemmed[i] = stem[0]
 			documents, err = idx.repository.GetDocumentsByWord(stem[0].Value)
 			if err != nil {

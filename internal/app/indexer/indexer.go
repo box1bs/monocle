@@ -82,7 +82,9 @@ func (idx *indexer) Index(config *configs.ConfigData, global context.Context) er
 		MaxVisitedDeep: config.MaxVisitedDepth,
 		MaxLinksInPage: config.MaxLinksInPage,
 		OnlySameDomain: config.OnlySameDomain,
-	}, idx.logger, workerPool.NewWorkerPool(config.WorkersCount, config.TasksCount, global, idx.logger), idx, global, idx.vectorizer.PutDocQuery)
+	}, idx.logger,
+		workerPool.NewWorkerPool(config.WorkersCount, config.TasksCount, global, idx.logger),
+		idx, global, idx.vectorizer.PutDocQuery)
 	idx.spider.Run()
 	return nil
 }

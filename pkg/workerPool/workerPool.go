@@ -58,7 +58,7 @@ func (wp *WorkerPool) cleanCalls() {
 
 func (wp *WorkerPool) Submit(task func()) {
 	wp.wg.Add(1)
-	wp.log.Write(logger.NewMessage(logger.WORKER_POOL_LAYER, logger.DEBUG, "Submitting task. Buffer: %d, Workers: %d", len(wp.buf), wp.workers))
+	//wp.log.Write(logger.NewMessage(logger.WORKER_POOL_LAYER, logger.DEBUG, "Submitting task. Buffer: %d, Workers: %d", len(wp.buf), wp.workers))
 
 	wrap := func() {
 		task()

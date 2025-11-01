@@ -144,9 +144,6 @@ func (ws *WebScraper) scrapeThroughtSitemap(ctx context.Context, current *url.UR
 			}
 
 			ws.pool.Submit(func() {
-				if ws.checkContext(ws.globalCtx, current.String()) {
-					return
-				}
 				c, cancel := context.WithTimeout(ws.globalCtx, crawlTime)
 				defer cancel()
 				ws.rlMu.Lock()

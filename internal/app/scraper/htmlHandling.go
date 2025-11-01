@@ -29,7 +29,7 @@ func (ws *WebScraper) fetchHTMLcontent(cur *url.URL, ctx context.Context, norm s
 	ws.rlMu.RUnlock()
 	doc, err := ws.getHTML(cur.String(), rl, numOfTries)
     if err != nil || doc == "" {
-		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error parsing page: %s, with error: %v\n", cur, err))
+		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error getting html: %s, with error: %v\n", cur, err))
         return nil, fmt.Errorf("error getting html: %v for page: %s", err, cur)
     }
 	
@@ -116,7 +116,7 @@ func (ws *WebScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 			tagName := strings.ToLower(t.Data)
 			switch tagName {
 			case "h1", "h2":
-				tagStack = append(tagStack, [2]byte{'h', byte([]rune(tagName)[1])})
+				tagStack = append(tagStack, [2]byte{'h', tagName[1]})
 
 			case "div":
 				for _, attr := range t.Attr {
@@ -155,9 +155,6 @@ func (ws *WebScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 							same := isSameOrigin(uri, baseURL)
 							if _, vis := ws.visited.Load(normalized); vis {
 								if visDepth < ws.cfg.MaxVisitedDeep {
-									if v := ws.lru.GetWithoutShift(sha256.Sum256([]byte(normalized))); v == nil || v.(cacheData).scrapedD > currentDeep {
-										break
-									}
 									visit = append(visit, &linkToken{link: uri, sameDomain: same, visited: true})
 								}
 								break
@@ -218,7 +215,7 @@ func (ws *WebScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 
 func (ws *WebScraper) getHTML(URL string, rl *rateLimiter, try int) (string, error) {
 	if try <= 0 {
-		return "", fmt.Errorf("max amount of tries wsa reached")
+		return "", fmt.Errorf("max amount of tries was reached")
 	}
 
 	req, err := http.NewRequest("GET", URL, nil)

@@ -42,7 +42,7 @@
     "ticker_time_milliseconds" : 1000,
     "worker_count" : 40,
     "task_count" : 1000,
-    "max_links_in_page" : 100,
+    "max_links_in_page" : 500,
     "max_depth_crawl" : 8,
     "max_visited_depth_crawl": 2,
     "ngram_count" : 3,

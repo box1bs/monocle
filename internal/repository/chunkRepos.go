@@ -83,6 +83,9 @@ func (ir *IndexRepository) extractNGrams(word string, n int) []string {
 }
 
 func (ir *IndexRepository) flushChunk(ng string, buffer []string) error {
+	ir.mu.Lock()
+	defer ir.mu.Unlock()
+
 	ir.counts[ng]++
 	chunkID := ir.counts[ng]
 

@@ -19,6 +19,7 @@ type IndexRepository struct {
 	DB 			*badger.DB
 	log 		*logger.Logger
 	wg 			*sync.WaitGroup
+	mu 			*sync.Mutex
 	wordBuffer	map[string][]string
 	counts		map[string]int
 	maxTxnBytes int
@@ -33,6 +34,7 @@ func NewIndexRepository(path string, logger *logger.Logger, maxTransactionBytes 
 		DB: db,
 		log: logger,
 		wg: new(sync.WaitGroup),
+		mu: new(sync.Mutex),
 		wordBuffer: make(map[string][]string),
 		counts: make(map[string]int),
 		maxTxnBytes: maxTransactionBytes,
@@ -97,6 +99,9 @@ func (ir *IndexRepository) LoadPageRank() (map[string]float64, error) {
 func (ir *IndexRepository) IndexDocumentWords(docID [32]byte, sequence map[string]int, pos map[string][]model.Position) error {
 	wb := ir.DB.NewWriteBatch()
 	defer wb.Cancel()
+
+	ir.mu.Lock()
+	defer ir.mu.Unlock()
 
 	curBytes := 0
 	var flushTreshold = ir.maxTxnBytes / 8
