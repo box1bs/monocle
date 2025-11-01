@@ -3,6 +3,7 @@ package indexer
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 
 	"github.com/box1bs/monocle/internal/app/indexer/textHandling"
 	"github.com/box1bs/monocle/internal/model"
@@ -61,20 +62,24 @@ func (idx *indexer) HandleTextQuery(text string) ([]string, []map[[32]byte]model
 	defer idx.mu.RUnlock()
 	reverthIndex := []map[[32]byte]model.WordCountAndPositions{}
 	words, stemmed, err := idx.stemmer.TokenizeAndStem(text)
+	if len(stemmed) == 0 {
+		return nil, nil, fmt.Errorf("empty tokens")
+	}
 	stemmedTokens := []string{}
+	wordp := 0
 
 	for i, lemma := range stemmed {
 		documents, err := idx.repository.GetDocumentsByWord(lemma.Value)
 		if err != nil {
 			return nil, nil, err
 		}
-		if len(documents) == 0 {
-			conds, err := idx.repository.GetWordsByNGram(words[i], idx.sc.NGramCount)
+		if len(documents) == 0 && lemma.Type == textHandling.WORD && len(words) > i {
+			conds, err := idx.repository.GetWordsByNGram(words[wordp], idx.sc.NGramCount)
 			if err != nil {
 				return nil, nil, err
 			}
-			replacement := idx.sc.BestReplacement(words[i], conds)
-			idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.DEBUG, "word '%s' replaced with '%s' in query", words[i], replacement))
+			replacement := idx.sc.BestReplacement(words[wordp], conds)
+			idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.DEBUG, "word '%s' replaced with '%s' in query", words[wordp], replacement))
 			_, stem, err := idx.stemmer.TokenizeAndStem(replacement)
 			if err != nil {
 				return nil, nil, err
@@ -90,6 +95,9 @@ func (idx *indexer) HandleTextQuery(text string) ([]string, []map[[32]byte]model
 		}
 		stemmedTokens = append(stemmedTokens, stemmed[i].Value)
 		reverthIndex = append(reverthIndex, documents)
+		if lemma.Type == textHandling.WORD {
+			wordp++
+		}
 	}
 
 	return stemmedTokens, reverthIndex, err

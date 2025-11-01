@@ -22,6 +22,7 @@ import (
 func main() {
 	var (
 		configFile = flag.String("config", "configs/app_config.json", "Path to configuration file")
+		indexFlag = flag.Bool("i", false, "enable indexing")
 	)
 	flag.Parse()
 
@@ -74,7 +75,9 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	i.Index(cfg, ctx)
+	if !*indexFlag {
+		i.Index(cfg, ctx)
+	}
 
 	count, err := ir.GetDocumentsCount()
 	if err != nil {
