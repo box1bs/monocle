@@ -3,6 +3,7 @@ package searcher
 import (
 	"context"
 	"math"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ type resitory interface {
 
 type vectorizer interface {
 	PutDocQuery(string, context.Context) <-chan [][]float64
+	CallRankModel([]byte) (*http.Response, error)
 }
 
 type Searcher struct {
@@ -246,7 +248,7 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 			continue
 		}
 
-		bestPos, err := callRankAPI(list, condidates)
+		bestPos, err := s.callRankAPI(list, condidates)
 		if err != nil {
 			s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.CRITICAL_ERROR, "python server error: %v", err))
         	return fl

@@ -37,6 +37,7 @@
     "info_log_path" : "C:/Projects/monocle/logs/info.log",
     "error_log_path" : "C:/Projects/monocle/logs/errors.log",
     "index_path" : "C:/Projects/monocle/data/index",
+    "model_sever_link" : "http://127.0.0.1:50920",
     "log_channel_size" : 10000,
     "cache_cap": 1000,
     "ticker_time_milliseconds" : 1000,

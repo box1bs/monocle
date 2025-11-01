@@ -11,6 +11,7 @@ import (
 type Vectorizer struct {
 	client 		*http.Client
 	docQueue 	chan reqBody
+	srvPath 	string
 }
 
 type VecResponce struct {
@@ -21,6 +22,8 @@ type reqBody struct {
 	Text 		string 				`json:"text"`
 	out 		chan [][]float64 	`json:"-"`
 }
+
+const defCtxTime = 10 * time.Second
 
 func (v *Vectorizer) PutDocQuery(t string, ctx context.Context) <- chan [][]float64 {
 	resChan := make(chan [][]float64, 1)
@@ -39,9 +42,9 @@ func (v *Vectorizer) vectorize(reqData []reqBody) {
 		return
 	}
 
-	ctx, c := context.WithTimeout(context.Background(), 10 * time.Second)
+	ctx, c := context.WithTimeout(context.Background(), defCtxTime)
 	defer c()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1:50920/vectorize", &buf)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.srvPath + "/vectorize", &buf)
 	if err != nil {
 		return
 	}
@@ -67,10 +70,23 @@ func (v *Vectorizer) vectorize(reqData []reqBody) {
 	}
 }
 
-func NewVectorizer(cap int, tickerTime int) *Vectorizer {
+func (v *Vectorizer) CallRankModel(reqData []byte) (*http.Response, error) {
+	ctx, c := context.WithTimeout(context.Background(), defCtxTime)
+	defer c()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.srvPath + "/rank", bytes.NewBuffer(reqData))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	return v.client.Do(req)
+}
+
+func NewVectorizer(cap, tickerTime int, srvPath string) *Vectorizer {
 	v := &Vectorizer{
 		client: &http.Client{},
 		docQueue: make(chan reqBody, cap),
+		srvPath: srvPath,
 	}
 
 	go func() {

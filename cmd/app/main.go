@@ -69,7 +69,7 @@ func main() {
 		//os.Exit(1)
 	}()
 
-	vec := textHandling.NewVectorizer(cfg.WorkersCount, cfg.TickerTimeMilliseconds)
+	vec := textHandling.NewVectorizer(cfg.WorkersCount, cfg.TickerTimeMilliseconds, cfg.PythonSrvPath)
 	defer vec.Close()
 	i, err := indexer.NewIndexer(ir, vec, log, cfg)
 	if err != nil {

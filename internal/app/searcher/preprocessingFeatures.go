@@ -1,12 +1,10 @@
 package searcher
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math"
-	"net/http"
 
 	"github.com/box1bs/monocle/internal/model"
 )
@@ -93,7 +91,7 @@ type rankingResponse struct {
 	Relevances []float64 `json:"rel"`
 }
 
-func callRankAPI(ids [][32]byte, features map[[32]byte]requestRanking) (int, error) {
+func (s *Searcher) callRankAPI(ids [][32]byte, features map[[32]byte]requestRanking) (int, error) {
 	var requestBody []requestRanking
 	for _, c := range ids {
 		requestBody = append(requestBody, features[c])
@@ -104,13 +102,13 @@ func callRankAPI(ids [][32]byte, features map[[32]byte]requestRanking) (int, err
 		return 0, fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
-	resp, err := http.Post("http://localhost:50920/rank", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := s.vectorizer.CallRankModel(jsonData)
 	if err != nil {
 		return 0, fmt.Errorf("http post request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != 200 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		return 0, fmt.Errorf("rank api returned non-200 status: %d, body: %s", resp.StatusCode, string(bodyBytes))
 	}
