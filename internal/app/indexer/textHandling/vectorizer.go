@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 )
@@ -24,6 +25,7 @@ type reqBody struct {
 }
 
 const defCtxTime = 10 * time.Second
+const BaseCanceledError = "context canceled"
 
 func (v *Vectorizer) PutDocQuery(t string, ctx context.Context) <- chan [][]float64 {
 	resChan := make(chan [][]float64, 1)
@@ -125,6 +127,30 @@ func NewVectorizer(cap, tickerTime int, srvPath string) *Vectorizer {
 	}()
 
 	return v
+}
+
+func (v *Vectorizer) WaitForPythonServer(ctx context.Context) error {
+	client := http.Client{Timeout: 3 * time.Second}
+	it := time.NewTicker(10 * time.Second)
+	req, err := http.NewRequest(http.MethodGet, v.srvPath + "/ping", nil)
+	if err != nil {
+		return err
+	}
+	for range it.C {
+		select{
+		case <-ctx.Done():
+			return errors.New(BaseCanceledError)
+		default:
+			resp, err := client.Do(req)
+			if err != nil || resp.StatusCode != 200 {
+				continue
+			}
+			resp.Body.Close()
+			it.Stop()
+			return nil
+		}
+	}
+	return nil
 }
 
 func (v *Vectorizer) Close() {

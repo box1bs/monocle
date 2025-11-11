@@ -70,6 +70,13 @@ func main() {
 	}()
 
 	vec := textHandling.NewVectorizer(cfg.WorkersCount, cfg.TickerTimeMilliseconds, cfg.PythonSrvPath)
+	if err := vec.WaitForPythonServer(ctx); err != nil && err.Error() != textHandling.BaseCanceledError {
+		panic(err)
+	} else if err != nil {
+		log.Write(logger.NewMessage(logger.MAIN_LAYER, logger.ERROR, textHandling.BaseCanceledError))
+		return
+	}
+
 	defer vec.Close()
 	i, err := indexer.NewIndexer(ir, vec, log, cfg)
 	if err != nil {

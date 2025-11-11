@@ -115,5 +115,9 @@ def get_ranked():
 
     return jsonify({'rel': np.asarray(resp).tolist()})
 
+@app.route('/ping', methods=['GET'])
+def pong():
+    return None, 200
+
 if __name__ == '__main__':
     app.run(debug=True, port=50920)
