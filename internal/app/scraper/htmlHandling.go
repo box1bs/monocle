@@ -18,12 +18,11 @@ import (
 )
 
 type linkToken struct {
-	link 		*url.URL
-	sameDomain 	bool
-	visited 	bool
+	Link 		*url.URL
+	SameDomain 	bool
 }
 
-func (ws *WebScraper) fetchHTMLcontent(cur *url.URL, ctx context.Context, norm string, rls *parser.RobotsTxt, gd, vd int) ([]*linkToken, error) {
+func (ws *WebScraper) fetchHTMLcontent(cur *url.URL, ctx context.Context, norm string, rls *parser.RobotsTxt, gd int) ([]*linkToken, error) {
 	ws.rlMu.RLock()
 	rl := ws.rlMap[cur.Host]
 	ws.rlMu.RUnlock()
@@ -41,9 +40,9 @@ func (ws *WebScraper) fetchHTMLcontent(cur *url.URL, ctx context.Context, norm s
 
 	c, cancel := context.WithTimeout(ctx, deadlineTime)
 	defer cancel()
-    links, passages := ws.parseHTMLStream(c, doc, cur, rls, gd, vd)
-	if len(links) == ws.cfg.MaxLinksInPage {
-		ws.lru.Put(hashed, cacheData{html: doc, scrapedD: gd})
+    links, passages := ws.parseHTMLStream(c, doc, cur, rls, gd)
+	if len(links) != 0 {
+		ws.lru.Put(hashed, links)
 	}
 	
 	if crawled, err := ws.idx.IsCrawledContent(document.Id, passages); err != nil || crawled {
@@ -70,13 +69,13 @@ func (ws *WebScraper) fetchHTMLcontent(cur *url.URL, ctx context.Context, norm s
 	return links, ws.idx.HandleDocumentWords(document, passages)
 }
 
-func (ws *WebScraper) parseHTMLStream(ctx context.Context, htmlContent string, baseURL *url.URL, rules *parser.RobotsTxt, currentDeep, visDepth int) (links []*linkToken, pasages []model.Passage) {
+func (ws *WebScraper) parseHTMLStream(ctx context.Context, htmlContent string, baseURL *url.URL, rules *parser.RobotsTxt, currentDeep int) (links []*linkToken, pasages []model.Passage) {
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
 	var tagStack [][2]byte
 	var garbageTagStack []string
-	links = make([]*linkToken, 0, ws.cfg.MaxLinksInPage)
+	links = make([]*linkToken, 0)
 	visit := make([]*linkToken, 0)
-
+	
 	tokenCount := 0
 	const checkContextEvery = 10
 
@@ -85,12 +84,8 @@ func (ws *WebScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 		if tokenCount%checkContextEvery == 0 {
 			select {
 			case <-ctx.Done():
-				l := len(links)
-				if l != ws.cfg.MaxLinksInPage {
-					v := len(visit)
-					for i := 0; i < ws.cfg.MaxLinksInPage - l && i < v; i++ {
-						links = append(links, visit[i])
-					}
+				if len(visit) != 0 {
+					links = append(links, visit...)
 				}
 				return
 			default:
@@ -136,14 +131,14 @@ func (ws *WebScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 						if err != nil {
 							break
 						}
-						if link != "" && len(links) < ws.cfg.MaxLinksInPage {
+						if link != "" {
 							normalized, err := normalizeUrl(link)
 							if err != nil {
 								ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error normalizing url: %s, with error: %v", link, err))
 								break
 							}
 							uri, err := url.Parse(link)
-							if err != nil {
+							if err != nil || uri == nil {
 								ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error parsing link: %v", err))
 								break
 							}
@@ -153,13 +148,13 @@ func (ws *WebScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 								}
 							}
 							same := isSameOrigin(uri, baseURL)
-							if _, vis := ws.visited.Load(normalized); vis {
-								if visDepth < ws.cfg.MaxVisitedDeep {
-									visit = append(visit, &linkToken{link: uri, sameDomain: same, visited: true})
+							if depth, vis := ws.visited.Load(normalized); vis {
+								if depth.(int) > currentDeep {
+									visit = append(visit, &linkToken{Link: uri, SameDomain: same})
 								}
 								break
 							}
-							links = append(links, &linkToken{link: uri, sameDomain: same})
+							links = append(links, &linkToken{Link: uri, SameDomain: same})
 						}
 						break
 					}
@@ -203,12 +198,8 @@ func (ws *WebScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 
 		}
 	}
-	l := len(links)
-	if l != ws.cfg.MaxLinksInPage {
-		v := len(visit)
-		for i := 0; i < ws.cfg.MaxLinksInPage - l && i < v; i++ {
-			links = append(links, visit[i])
-		}
+	if len(visit) != 0 {
+		links = append(links, visit...)
 	}
 	return
 }

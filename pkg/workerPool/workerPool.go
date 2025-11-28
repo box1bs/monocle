@@ -27,7 +27,7 @@ func NewWorkerPool(size int, queueCapacity int, c context.Context, l *logger.Log
 		ctx: 		c,	
 	}
 	go func() {
-		t := time.NewTicker(30 * time.Second)
+		t := time.NewTicker(90 * time.Second)
 		for range t.C {
 			select{
 			case <-c.Done():

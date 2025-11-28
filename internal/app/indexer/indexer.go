@@ -14,6 +14,9 @@ import (
 )
 
 type repository interface {
+	IndexUrlsByHash([32]byte, []byte) error
+	GetPageUrlsByHash([32]byte) ([]byte, error)
+
 	LoadVisitedUrls(*sync.Map) error
 	SaveVisitedUrls(*sync.Map) error
 	
@@ -79,8 +82,6 @@ func (idx *indexer) Index(config *configs.ConfigData, global context.Context) er
 		StartURLs:     	config.BaseURLs,
 		CacheCap: 		config.CacheCap,	
 		Depth:       	config.MaxDepth,
-		MaxVisitedDeep: config.MaxVisitedDepth,
-		MaxLinksInPage: config.MaxLinksInPage,
 		OnlySameDomain: config.OnlySameDomain,
 	}, idx.logger,
 		workerPool.NewWorkerPool(config.WorkersCount, config.TasksCount, global, idx.logger),
@@ -104,4 +105,12 @@ func (idx *indexer) GetAVGLen() (float64, error) {
 	}
 
 	return float64(wordCount) / float64(len(docs)), nil
+}
+
+func (idx *indexer) SaveUrlsToBank(key [32]byte, data []byte) error {
+	return idx.repository.IndexUrlsByHash(key, data)
+}
+
+func (idx *indexer) GetUrlsByHash(key [32]byte) ([]byte, error) {
+	return idx.repository.GetPageUrlsByHash(key)
 }

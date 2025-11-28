@@ -1,7 +1,9 @@
 package scraper
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/gob"
 	"regexp"
 
 	"github.com/box1bs/monocle/internal/app/scraper/lruCache"
@@ -21,6 +23,8 @@ var urlRegex = regexp.MustCompile(`^https?://`)
 type indexer interface {
     HandleDocumentWords(*model.Document, []model.Passage) error
 	IsCrawledContent([32]byte, []model.Passage) (bool, error)
+	SaveUrlsToBank([32]byte, []byte) error
+	GetUrlsByHash([32]byte) ([]byte, error)
 }
 
 type workerPool interface {
@@ -48,14 +52,11 @@ type ConfigData struct {
 	StartURLs     	[]string
 	CacheCap 		int
 	Depth       	int
-	MaxVisitedDeep 	int
-	MaxLinksInPage 	int
 	OnlySameDomain  bool
 }
 
 const (
 	userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
-	sitemap = "sitemap.xml"
  	crawlTime = 600 * time.Second
  	deadlineTime = 30 * time.Second
 	numOfTries = 2 // если кто то решил поменять это на 0, чтож, удачи
@@ -100,7 +101,7 @@ func (ws *WebScraper) Run() {
 			rl := NewRateLimiter(DefaultDelay)
 			ws.rlMap[parsed.Host] = rl
 			ws.rlMu.Unlock()
-			ws.ScrapeWithContext(ctx, parsed, nil, 0, 0)
+			ws.ScrapeWithContext(ctx, parsed, nil, 0)
 		})
 	}
 	ws.pool.Wait()
@@ -108,56 +109,81 @@ func (ws *WebScraper) Run() {
 	ws.pool.Stop()
 }
 
-type cacheData struct {
-	html 		string
-	scrapedD 	int
-}
-
-func (ws *WebScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL, rules *parser.RobotsTxt, depth, visDeep int) {
+func (ws *WebScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL, rules *parser.RobotsTxt, depth int) {
     if ws.checkContext(ctx, currentURL.String()) {return}
 
     if depth >= ws.cfg.Depth {
         return
     }
-
-	ws.fetchPageRulesAndOffers(ctx, currentURL, rules, depth, visDeep)
-
+	
     normalized, err := normalizeUrl(currentURL.String())
     if err != nil {
-        return
+		return
     }
-    
-	links := []*linkToken{}
-    if _, loaded := ws.visited.LoadOrStore(normalized, struct{}{}); loaded && visDeep >= ws.cfg.MaxVisitedDeep {
-		return
-	} else if loaded {
-		if v := ws.lru.Get(sha256.Sum256([]byte(normalized))); v != nil {
-			cached := v.(cacheData)
-			c, cancel := context.WithTimeout(ctx, deadlineTime)
-			defer cancel()
-			links, _ = ws.parseHTMLStream(c, cached.html, currentURL, rules, depth, visDeep)
-		} else {
-			return
-		}
-	} else {
-		links, err = ws.fetchHTMLcontent(currentURL, ctx, normalized, rules, depth, visDeep)
-		if err != nil {
-			return
-		}
-	}
 	
-	if len(links) == 0 {
-		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "empty links in page %s\n", currentURL))
+	links, err := ws.fetchPageRulesAndOffers(ctx, currentURL, rules)
+	if err.Error() == BaseXMLPageError || ws.checkContext(ctx, currentURL.String()) {
 		return
+	}
+	hashed := sha256.Sum256([]byte(normalized))
+	load := false
+    
+	if len(links) == 0 {
+		if prevDepth, loaded := ws.visited.LoadOrStore(normalized, depth); loaded && prevDepth.(int) <= depth {
+			return
+		} else if loaded {
+			load = true
+			if v := ws.lru.Get(hashed); v != nil {
+				links = v.([]*linkToken)
+			} else {
+				encoded, err := ws.idx.GetUrlsByHash(hashed)
+				if err != nil {
+					if err.Error() != "Key not found" {
+						ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.CRITICAL_ERROR, "error getting urls, from db: %v", err))
+					}
+					return
+				}
+				if err := gob.NewDecoder(bytes.NewBuffer(encoded)).Decode(&links); err != nil {
+					ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error unmarshalling urls from db: %v", err))
+					return
+				}
+				if len(links) != 0 {
+					ws.lru.Put(hashed, links)
+				}
+			}
+		} else {
+			links, err = ws.fetchHTMLcontent(currentURL, ctx, normalized, rules, depth)
+			if err != nil {
+				return
+			}
+		}
+		
+		if len(links) == 0 {
+			ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "empty links in page %s\n", currentURL))
+			return
+		}
+
+		if !load {
+			var buf bytes.Buffer
+			if err := gob.NewEncoder(&buf).Encode(links); err != nil {
+				ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.CRITICAL_ERROR, "error marshalling urls: %v", err))
+				return
+			}
+
+			if err := ws.idx.SaveUrlsToBank(hashed, buf.Bytes()); err != nil {
+				ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error saving urls: %v", err))
+				return
+			}
+		}
 	}
 	
 	for _, link := range links {	
-		if ws.cfg.OnlySameDomain && !link.sameDomain {
+		if ws.cfg.OnlySameDomain && !link.SameDomain {
 			continue
 		}
 		
 		rls := rules
-        if !link.sameDomain {
+        if !link.SameDomain {
 			rls = nil
         }
 
@@ -165,15 +191,11 @@ func (ws *WebScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
 			c, cancel := context.WithTimeout(ws.globalCtx, crawlTime)
 			defer cancel()
 			ws.rlMu.Lock()
-			if ws.rlMap[link.link.Host] == nil {
-				ws.rlMap[link.link.Host] = NewRateLimiter(DefaultDelay)
+			if ws.rlMap[link.Link.Host] == nil {
+				ws.rlMap[link.Link.Host] = NewRateLimiter(DefaultDelay)
 			}
 			ws.rlMu.Unlock()
-			visD := 0
-			if link.visited {
-				visD = visDeep + 1
-			}
-			ws.ScrapeWithContext(c, link.link, rls, depth+1, visD)
+			ws.ScrapeWithContext(c, link.Link, rls, depth+1)
 		})
     }
 }

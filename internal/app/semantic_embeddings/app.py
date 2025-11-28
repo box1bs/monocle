@@ -117,7 +117,7 @@ def get_ranked():
 
 @app.route('/ping', methods=['GET'])
 def pong():
-    return None, 200
+    return "", 200
 
 if __name__ == '__main__':
     app.run(debug=True, port=50920)
