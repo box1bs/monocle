@@ -16,21 +16,29 @@ import (
 	"github.com/box1bs/monocle/internal/app/searcher"
 	"github.com/box1bs/monocle/internal/model"
 	"github.com/box1bs/monocle/internal/repository"
+	"github.com/box1bs/monocle/internal/tui"
 	"github.com/box1bs/monocle/pkg/logger"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
 	var (
 		configFile = flag.String("config", "configs/app_config.json", "Path to configuration file")
-		indexFlag = flag.Bool("i", false, "enable indexing")
+		indexFlag = flag.Bool("i", false, "disable indexing")
+		interfaceFlag = flag.Bool("gui", false, "use terminal UI")
 	)
 	flag.Parse()
-
+	
 	cfg, err := configs.UploadLocalConfiguration(*configFile)
 	if err != nil {
 		panic(err)
 	}
 
+	if *interfaceFlag {
+		initGUI(cfg, *indexFlag)
+		return
+	}
+	
 	in := os.Stdout
 	er := os.Stderr
 	if cfg.InfoLogPath != "-" {
@@ -120,5 +128,49 @@ func Present(docs []*model.Document) {
 	for i, doc := range docs {
 		fmt.Printf("%d. URL: %s\n\n", 
 			i+1, doc.URL)
+	}
+}
+
+func initGUI(cfg *configs.ConfigData, indexF bool) {
+	lc := tui.NewLogChannel(cfg.LogChannelSize)
+	log := logger.NewLogger(lc, lc, cfg.LogChannelSize)
+	defer log.Close()
+
+	ir, err := repository.NewIndexRepository(cfg.IndexPath, log, cfg.MaxTransactionBytes)
+	if err != nil {
+		panic(err)
+	}
+	defer ir.DB.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	c := make(chan struct{}, 1)
+	go func() {
+		<-c
+		fmt.Println("\nShutting down...")
+		cancel()
+		//os.Exit(1)
+	}()
+
+	vec := textHandling.NewVectorizer(cfg.WorkersCount, cfg.TickerTimeMilliseconds, cfg.PythonSrvPath)
+	if err := vec.WaitForPythonServer(ctx); err != nil && err.Error() != textHandling.BaseCanceledError {
+		panic(err)
+	} else if err != nil {
+		log.Write(logger.NewMessage(logger.MAIN_LAYER, logger.ERROR, textHandling.BaseCanceledError))
+		return
+	}
+	defer vec.Close()
+	i, err := indexer.NewIndexer(ir, vec, log, cfg)
+	if err != nil {
+		panic(err)
+	}
+	if !indexF {
+		go i.Index(cfg, ctx)
+	}
+
+	model := tui.InitModel(lc, cfg.TUIBorderColor, ir.GetDocumentsCount, searcher.NewSearcher(log, i, ir, vec).Search, c)
+	if _, err := tea.NewProgram(model).Run(); err != nil {
+		panic(err)
 	}
 }

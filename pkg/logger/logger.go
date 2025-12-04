@@ -80,7 +80,6 @@ func (log *Logger) Write(msg message) {
 	select {
 	case log.ch <- msg:
 	default:
-		fmt.Printf("log channel full, dropping log: %s", msg.text)
 	}
 }
 

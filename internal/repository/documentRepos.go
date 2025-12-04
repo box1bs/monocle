@@ -72,6 +72,9 @@ func (ir *IndexRepository) SaveDocument(doc *model.Document) error {
 }
 
 func (ir *IndexRepository) GetDocumentByID(docID [32]byte) (*model.Document, error) {
+	ir.mu.Lock()
+	defer ir.mu.Unlock()
+
 	var docBytes []byte
 	err := ir.DB.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(fmt.Appendf(nil, DocumentKeyPrefix, docID[:]))
@@ -93,8 +96,10 @@ func (ir *IndexRepository) GetDocumentByID(docID [32]byte) (*model.Document, err
 }
 
 func (ir *IndexRepository) GetAllDocuments() ([]*model.Document, error) {
-	var documents []*model.Document
+	ir.mu.Lock()
+	defer ir.mu.Unlock()
 
+	var documents []*model.Document
 	err := ir.DB.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 10
@@ -133,8 +138,10 @@ func (ir *IndexRepository) GetAllDocuments() ([]*model.Document, error) {
 }
 
 func (ir *IndexRepository) GetDocumentsCount() (int, error) {
-	var count int
+	ir.mu.Lock()
+	defer ir.mu.Unlock()
 
+	var count int
 	err := ir.DB.View(func(txn *badger.Txn) error {
 		docPrefix := []byte("doc:")
 

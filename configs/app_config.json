@@ -38,6 +38,7 @@
     "error_log_path" : "./logs/errors.log",
     "index_path" : "./data/index",
     "model_sever_link" : "http://127.0.0.1:50920",
+    "tui_border_color" : "#fffff0",
     "log_channel_size" : 10000,
     "cache_cap": 100,
     "ticker_time_milliseconds" : 1000,
@@ -46,6 +47,6 @@
     "max_depth_crawl" : 8,
     "ngram_count" : 3,
     "max_typo" : 2,
-    "max_transaction_bytes" : 10485760,
+    "max_transaction_bytes" : 1048576,
     "only_same_domain" : false
 }

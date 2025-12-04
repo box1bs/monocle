@@ -101,7 +101,7 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 			defer wg.Done()
 	
 			idf := math.Log(float64(length) / float64(len(index[i]) + 1)) + 1.0
-			s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.DEBUG, "len documents with word: %s, %d", words[i], len(index[i])))
+			s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.INFO, "len documents with word: %s, %d", words[i], len(index[i])))
 	
 			for docID, item := range index[i] {
 				rankMu.RLock()
@@ -180,7 +180,7 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 	}
 	
 	
-	s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.DEBUG, "result len: %d", len(result)))
+	s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.INFO, "result len: %d", len(result)))
 	
 	<-done
 	
@@ -204,7 +204,7 @@ func (s *Searcher) Search(query string, maxLen int) []*model.Document {
 
 	length = len(filteredResult)
 	if length == 0 {
-		s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.DEBUG, "empty result"))
+		s.log.Write(logger.NewMessage(logger.SEARCHER_LAYER, logger.INFO, "empty result"))
 		return nil
 	}
 

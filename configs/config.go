@@ -6,11 +6,12 @@ import (
 )
 
 type ConfigData struct {
-	BaseURLs       			[]string 	`json:"base_urls" validate:"required,len=1:20"`
+	BaseURLs       			[]string 	`json:"base_urls" validate:"required,len=1:100"`
 	InfoLogPath   			string   	`json:"info_log_path" validate:"required"` // use '-' for stdout
 	ErrorLogPath  			string   	`json:"error_log_path" validate:"required"` // use '-' for stderr
 	IndexPath     			string   	`json:"index_path" validate:"required"`
-	PythonSrvPath     	string   	`json:"model_sever_link" validate:"required"`
+	PythonSrvPath     		string   	`json:"model_sever_link" validate:"required"`
+	TUIBorderColor			string 		`json:"tui_border_color" validate:"required"`
 	LogChannelSize 			int      	`json:"log_channel_size" validate:"min=1000,max=50000"`
 	CacheCap 				int      	`json:"cache_cap" validate:"min=100,max=100000"`
 	TickerTimeMilliseconds  int  		`json:"ticker_time_milliseconds" validate:"min=500,max=10000"`

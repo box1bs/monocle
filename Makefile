@@ -8,5 +8,11 @@ build:
 index: build
 	./bin/${BINARY_NAME}
 
+index-gui: build
+	./bin/${BINARY_NAME} --gui
+
 search: build
 	./bin/${BINARY_NAME} -i
+
+python-run:
+	./internal/app/semantic_embeddings/.venv/bin/python ./internal/app/semantic_embeddings/app.py

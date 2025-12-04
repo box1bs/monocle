@@ -1,4 +1,5 @@
 import torch
+import os
 import numpy as np
 from flask import Flask, request, jsonify
 from transformers import BertConfig, BertModel, BertTokenizer
@@ -6,8 +7,10 @@ from sklearn.preprocessing import StandardScaler
 
 app = Flask(__name__)
 
-MODEL_DIR = 'model'
-RANKING_MODEL_PATH = 'ranking_model/LR_BERT_L2H128_MRR_0.4337.pt'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+MODEL_DIR = os.path.join(BASE_DIR, 'model')
+RANKING_MODEL_PATH = os.path.join(BASE_DIR, 'ranking_model/LR_BERT_L2H128_MRR_0.4337.pt')
 
 config = BertConfig.from_json_file(f'{MODEL_DIR}/config.json')
 bert = BertModel.from_pretrained(MODEL_DIR, config=config)

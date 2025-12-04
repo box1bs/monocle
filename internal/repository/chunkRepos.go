@@ -29,6 +29,9 @@ func (ir *IndexRepository) IndexNGrams(words []string, n int) error {
 }
 
 func (ir *IndexRepository) GetWordsByNGram(word string, n int) ([]string, error) {
+	ir.mu.Lock()
+	defer ir.mu.Unlock()
+
 	result := []string{}
 	alreadyInc := map[string]struct{}{}
 
