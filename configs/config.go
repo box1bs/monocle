@@ -20,7 +20,6 @@ type ConfigData struct {
 	MaxDepth       			int      	`json:"max_depth_crawl" validate:"min=1,max=10"`
 	NGramCount    			int      	`json:"ngram_count" validate:"min=2,max=5"`
 	MaxTypo	  				int      	`json:"max_typo" validate:"min=1,max=4"`
-	MaxTransactionBytes 	int      	`json:"max_transaction_bytes" validate:"min=1048576,max=15728640"`
 	OnlySameDomain 			bool     	`json:"only_same_domain"`
 }
 

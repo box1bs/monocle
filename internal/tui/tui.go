@@ -100,12 +100,16 @@ func showIndexedNum() tea.Cmd {
 
 func (vm *viewModel) waitForLog() tea.Cmd {
 	return func() tea.Msg {
-		return logMsg(<-vm.UILogWriter.readCh)
+		d, ok := <-vm.UILogWriter.readCh
+		if !ok {
+			return nil
+		}
+		return logMsg(d)
 	}
 }
 
 func (vm *viewModel) renderLeftLog() {
-	width := vm.leftVessel.Width
+	width := vm.leftVessel.Width - 2
 	if width < minX * 0.4 {
 		return
 	}
@@ -168,14 +172,12 @@ func (vm *viewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				vm.searchLabel.SetValue("")
 				vm.rightVessel.GotoTop()
 			}
-		case "q":
-			return vm, tea.Quit
-		case "ctrl+c":
+		case "ctrl+c", "q":
 			select {
 			case vm.closeIndex <- struct{}{}:
 			default:
 			}
-			return vm, nil
+			return vm, tea.Quit
 		}
 	}
 

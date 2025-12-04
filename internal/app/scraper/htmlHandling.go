@@ -242,42 +242,19 @@ func (ws *WebScraper) getHTML(URL string, rl *rateLimiter, try int) (string, err
 		return "", fmt.Errorf("unsupported content type: %s", ctype)
 	}
 
-	resultCh := make(chan struct {
-		content string
-		err     error
-	}, 1)
+	var builder strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
 
-	go func() {
-		var builder strings.Builder
-		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
+	for scanner.Scan() {
+		builder.WriteString(scanner.Text())
 
-		for scanner.Scan() {
+		select {
+		case <-ws.globalCtx.Done():
+			return builder.String(), nil
+		default:
 			builder.WriteString(scanner.Text())
-
-			select {
-			case <-ws.globalCtx.Done():
-				resultCh <- struct {
-					content string
-					err     error
-				}{
-					content: builder.String(),
-					err:     nil,
-				}
-				return
-			default:
-			}
 		}
-
-		resultCh <- struct {
-			content string
-			err     error
-		}{
-			content: builder.String(),
-			err:     scanner.Err(),
-		}
-	}()
-
-	r := <-resultCh
-	return r.content, r.err
+	}
+	return builder.String(), scanner.Err()
 }

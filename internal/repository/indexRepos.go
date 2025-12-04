@@ -3,6 +3,7 @@ package repository
 import (
 	"encoding/hex"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -13,8 +14,6 @@ import (
 	"github.com/dgraph-io/badger/v3"
 )
 
-const perEntryOverhead = 64
-
 type IndexRepository struct {
 	DB 			*badger.DB
 	log 		*logger.Logger
@@ -22,10 +21,9 @@ type IndexRepository struct {
 	mu 			*sync.Mutex
 	wordBuffer	map[string][]string
 	counts		map[string]int
-	maxTxnBytes int
 }
 
-func NewIndexRepository(path string, logger *logger.Logger, maxTransactionBytes int) (*IndexRepository, error) {
+func NewIndexRepository(path string, logger *logger.Logger) (*IndexRepository, error) {
 	db, err := badger.Open(badger.DefaultOptions(path).WithLoggingLevel(badger.WARNING))
 	if err != nil {
 		return nil, err
@@ -37,7 +35,6 @@ func NewIndexRepository(path string, logger *logger.Logger, maxTransactionBytes 
 		mu: new(sync.Mutex),
 		wordBuffer: make(map[string][]string),
 		counts: make(map[string]int),
-		maxTxnBytes: maxTransactionBytes,
 	}, nil
 }
 
@@ -52,7 +49,15 @@ func (ir *IndexRepository) LoadVisitedUrls(visitedURLs *sync.Map) error {
             item := it.Item()
             key := string(item.Key())
             url := strings.TrimPrefix(key, "visited:")
-            visitedURLs.Store(url, struct{}{})
+			depth, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			d, err := strconv.Atoi(string(depth))
+			if err != nil {
+				return err
+			}
+            visitedURLs.Store(url, d)
         }
         return nil
     })
@@ -62,7 +67,7 @@ func (ir *IndexRepository) SaveVisitedUrls(visitedURLs *sync.Map) error {
 	visitedURLs.Range(func(key, value any) bool {
 		if url, ok := key.(string); ok {
 			ir.DB.Update(func(txn *badger.Txn) error {
-				return txn.Set([]byte("visited:" + url), []byte(""))
+				return txn.Set([]byte("visited:" + url), fmt.Append(nil, value.(int)))
 			})
 		}
 		return true
@@ -103,8 +108,8 @@ func (ir *IndexRepository) IndexDocumentWords(docID [32]byte, sequence map[strin
 	ir.mu.Lock()
 	defer ir.mu.Unlock()
 
-	curBytes := 0
-	var flushTreshold = ir.maxTxnBytes / 8
+	const maxWordsInTXN = 1000
+	itNum := 0
 
 	for word, freq := range sequence {
 		key := fmt.Appendf(nil, WordDocumentKeyFormat, word, docID)
@@ -121,14 +126,15 @@ func (ir *IndexRepository) IndexDocumentWords(docID [32]byte, sequence map[strin
 		if err := wb.Set(key, val); err != nil {
 			return err
 		}
+		itNum++
 
-		curBytes += len(key) + len(val) + perEntryOverhead
-		if curBytes >= flushTreshold {
+		if itNum >= maxWordsInTXN {
 			if err := wb.Flush(); err != nil {
 				return err
 			}
-			curBytes = 0
+			itNum = 0
 		}
+
 	}
 	return wb.Flush()
 }

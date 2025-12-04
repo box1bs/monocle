@@ -19,7 +19,6 @@ func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Pa
 	defer idx.mu.Unlock()
 
 	allTokens := []string{}
-
 	for _, passage := range passages {
 		orig, stemmed, err := idx.stemmer.TokenizeAndStem(passage.Text)
 		if err != nil {
@@ -28,11 +27,10 @@ func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Pa
 		if len(stemmed) == 0 {
 			continue
 		}
-		doc.WordCount += len(stemmed)
 
 		allTokens = append(allTokens, orig...)
 		for _, w := range stemmed {
-			if w.Type == textHandling.NUMBER {
+			if w.Type == textHandling.NUMBER || len(w.Value) > 64 {
 				continue
 			}
 			stem[w.Value]++
@@ -40,6 +38,7 @@ func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Pa
 			i++
 		}
 	}
+	doc.WordCount = i
 
 	if err := idx.repository.SaveDocument(doc); err != nil {
 		idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.CRITICAL_ERROR, "error saving document: %v", err))

@@ -122,7 +122,7 @@ func (ws *WebScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
     }
 	
 	links, err := ws.fetchPageRulesAndOffers(ctx, currentURL, rules)
-	if err.Error() != BaseXMLPageError || ws.checkContext(ctx, currentURL.String()) {
+	if err.Error() == BaseXMLPageError || ws.checkContext(ctx, currentURL.String()) {
 		return
 	}
 	hashed := sha256.Sum256([]byte(normalized))

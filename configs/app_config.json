@@ -47,6 +47,5 @@
     "max_depth_crawl" : 8,
     "ngram_count" : 3,
     "max_typo" : 2,
-    "max_transaction_bytes" : 1048576,
     "only_same_domain" : false
 }

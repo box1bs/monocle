@@ -28,7 +28,7 @@ func main() {
 		interfaceFlag = flag.Bool("gui", false, "use terminal UI")
 	)
 	flag.Parse()
-	
+
 	cfg, err := configs.UploadLocalConfiguration(*configFile)
 	if err != nil {
 		panic(err)
@@ -59,7 +59,7 @@ func main() {
 	log := logger.NewLogger(in, er, cfg.LogChannelSize)
 	defer log.Close()
 
-	ir, err := repository.NewIndexRepository(cfg.IndexPath, log, cfg.MaxTransactionBytes)
+	ir, err := repository.NewIndexRepository(cfg.IndexPath, log)
 	if err != nil {
 		panic(err)
 	}
@@ -136,7 +136,7 @@ func initGUI(cfg *configs.ConfigData, indexF bool) {
 	log := logger.NewLogger(lc, lc, cfg.LogChannelSize)
 	defer log.Close()
 
-	ir, err := repository.NewIndexRepository(cfg.IndexPath, log, cfg.MaxTransactionBytes)
+	ir, err := repository.NewIndexRepository(cfg.IndexPath, log)
 	if err != nil {
 		panic(err)
 	}
@@ -165,6 +165,7 @@ func initGUI(cfg *configs.ConfigData, indexF bool) {
 	if err != nil {
 		panic(err)
 	}
+
 	if !indexF {
 		go i.Index(cfg, ctx)
 	}
