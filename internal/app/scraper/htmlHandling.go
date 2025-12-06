@@ -27,10 +27,14 @@ func (ws *WebScraper) fetchHTMLcontent(cur *url.URL, ctx context.Context, norm s
 	rl := ws.rlMap[cur.Host]
 	ws.rlMu.RUnlock()
 	doc, err := ws.getHTML(cur.String(), rl, numOfTries)
-    if err != nil || doc == "" {
-		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error getting html: %s, with error: %v\n", cur, err))
-        return nil, fmt.Errorf("error getting html: %v for page: %s", err, cur)
+    if err != nil {
+		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "error getting html: %s, with error: %v", cur, err))
+        return nil, err
     }
+	if doc == "" {
+		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.DEBUG, "empty html content on page: %s", cur))
+        return nil, fmt.Errorf("empty html content on page: %s", cur)
+	}
 	
 	hashed := sha256.Sum256([]byte(norm))
     document := &model.Document{
@@ -58,11 +62,11 @@ func (ws *WebScraper) fetchHTMLcontent(cur *url.URL, ctx context.Context, norm s
 	select {
 	case document.WordVec, ok = <-ws.putDocReq(fullText.String(), ws.globalCtx):
 		if !ok {
-			ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.CRITICAL_ERROR, "error vectorizing document for page: %s\n", cur))
+			ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.CRITICAL_ERROR, "error vectorizing document for page: %s", cur))
 			return nil, fmt.Errorf("error vectoriing document for page: %s", cur)
 		}
 	case <-ws.globalCtx.Done():
-		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.CRITICAL_ERROR, "timeout vectorizing document for page: %s\n", cur))
+		ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.CRITICAL_ERROR, "timeout vectorizing document for page: %s", cur))
 		return nil, fmt.Errorf("context canceled")
 	}
 
@@ -206,7 +210,7 @@ func (ws *WebScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 
 func (ws *WebScraper) getHTML(URL string, rl *rateLimiter, try int) (string, error) {
 	if try <= 0 {
-		return "", fmt.Errorf("max amount of tries was reached")
+		return "", fmt.Errorf("http status code: 419, and max amount of tries was reached")
 	}
 
 	req, err := http.NewRequest("GET", URL, nil)

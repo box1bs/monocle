@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/reflow/wordwrap"
+	"github.com/muesli/reflow/wrap"
 )
 
 const (
@@ -109,13 +109,16 @@ func (vm *viewModel) waitForLog() tea.Cmd {
 }
 
 func (vm *viewModel) renderLeftLog() {
-	width := vm.leftVessel.Width - 2
+	width := vm.leftVessel.Width
 	if width < minX * 0.4 {
 		return
 	}
-	
-	allLogs := strings.Join(vm.logPlate, "")
-	wrappedContent := wordwrap.String(allLogs, width)
+
+	var cls strings.Builder
+	for _, s := range vm.logPlate {
+		cls.WriteString(strings.ReplaceAll(strings.ReplaceAll(s, "\t", " "), "\r", "")) // чтобы не слетало форматирование
+	}
+	wrappedContent := wrap.String(cls.String(), width) // чтобы  резало всех и каждого
 	
 	vm.leftVessel.SetContent(wrappedContent)
 	vm.leftVessel.GotoBottom()
@@ -172,12 +175,14 @@ func (vm *viewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				vm.searchLabel.SetValue("")
 				vm.rightVessel.GotoTop()
 			}
-		case "ctrl+c", "q":
+		case "q":
+			return vm, tea.Quit
+		case "ctrl+c":
 			select {
-			case vm.closeIndex <- struct{}{}:
+			case vm.closeIndex <- struct{}{}: // чтобы программа насмерть не зависала, если кто то будет тыкать это больше чем надо
 			default:
 			}
-			return vm, tea.Quit
+			return vm, tea.ClearScreen // заново рендерим поля
 		}
 	}
 

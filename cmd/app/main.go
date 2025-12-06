@@ -148,7 +148,7 @@ func initGUI(cfg *configs.ConfigData, indexF bool) {
 	c := make(chan struct{}, 1)
 	go func() {
 		<-c
-		fmt.Println("\nShutting down...")
+		log.Write(logger.NewMessage(logger.MAIN_LAYER, logger.INFO, "Shutting down...")) // чтоб форматирование bubble tea не ломалось
 		cancel()
 		//os.Exit(1)
 	}()

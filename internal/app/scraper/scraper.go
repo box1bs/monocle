@@ -59,7 +59,7 @@ const (
 	userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
  	crawlTime = 600 * time.Second
  	deadlineTime = 30 * time.Second
-	numOfTries = 2 // если кто то решил поменять это на 0, чтож, удачи
+	numOfTries = 3 // если кто то решил поменять это на 0, чтож, удачи
 )
 
 func NewScraper(mp *sync.Map, cfg *ConfigData, l *logger.Logger, wp workerPool, idx indexer, c context.Context, putDocReq func(string, context.Context) <-chan [][]float64) *WebScraper {
@@ -159,7 +159,7 @@ func (ws *WebScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
 		}
 		
 		if len(links) == 0 {
-			ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "empty links in page %s\n", currentURL))
+			ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.DEBUG, "empty links in page %s\n", currentURL))
 			return
 		}
 

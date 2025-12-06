@@ -102,41 +102,53 @@ func (ir *IndexRepository) LoadPageRank() (map[string]float64, error) {
 }
 
 func (ir *IndexRepository) IndexDocumentWords(docID [32]byte, sequence map[string]int, pos map[string][]model.Position) error {
-	wb := ir.DB.NewWriteBatch()
-	defer wb.Cancel()
-
 	ir.mu.Lock()
 	defer ir.mu.Unlock()
 
-	const maxWordsInTXN = 1000
-	itNum := 0
-
-	for word, freq := range sequence {
-		key := fmt.Appendf(nil, WordDocumentKeyFormat, word, docID)
-        wcp := model.WordCountAndPositions{
-            Count:     freq,
-            Positions: pos[word],
-        }
-
-		val, err := json.Marshal(wcp)
-		if err != nil {
-			return err
-		}
-		
-		if err := wb.Set(key, val); err != nil {
-			return err
-		}
-		itNum++
-
-		if itNum >= maxWordsInTXN {
-			if err := wb.Flush(); err != nil {
-				return err
-			}
-			itNum = 0
-		}
-
+	type wordEntry struct {
+		word string
+		freq int
 	}
-	return wb.Flush()
+	
+	entries := make([]wordEntry, 0, len(sequence))
+	for w, f := range sequence {
+		entries = append(entries, wordEntry{word: w, freq: f})
+	}
+
+	const iterSize = 500
+	for i := 0; i < len(entries); i += iterSize {
+		chunk := entries[i: min(len(entries), i + iterSize)]
+
+		if err := ir.DB.Update(func(txn *badger.Txn) error {
+			for _, entry := range chunk {
+				key := fmt.Appendf(nil, WordDocumentKeyFormat, entry.word, docID)
+				positions := pos[entry.word]
+				if len(positions) > 500 {
+					positions = positions[:500] // от переполнения транзакции
+				}
+
+				wcp := model.WordCountAndPositions{
+					Count:     entry.freq,
+					Positions: positions,
+				}
+				val, err := json.Marshal(wcp)
+				if err != nil {
+					return err
+				}
+				if len(val) > 1024 * 1024 { // нужен ли нам текстовый токен более 1 мб? я думаю нет
+					continue
+				}
+				if err := txn.Set(key, val); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return fmt.Errorf("failed to update chunk %d: %w", i, err)
+		}
+	}
+
+	return nil
 }
 
 func (ir *IndexRepository) GetDocumentsByWord(word string) (map[[32]byte]model.WordCountAndPositions, error) {

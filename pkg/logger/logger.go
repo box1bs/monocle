@@ -72,7 +72,7 @@ func (log *Logger) compareMessage(msg message) []byte {
 	case CRITICAL_ERROR:
 		s.WriteString(" CRITICAL_ERROR: ")
 	}
-	s.WriteString(fmt.Sprintf("%s on layer: %d\n",strings.TrimSuffix(msg.text, "\n"), msg.layer))
+	s.WriteString(fmt.Sprintf("%s on layer: %d\n", strings.TrimSuffix(msg.text, "\n"), msg.layer))
 	return []byte(s.String())
 }
 
