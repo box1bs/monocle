@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/gob"
-	"regexp"
 
 	"github.com/box1bs/monocle/internal/app/scraper/lruCache"
 	"github.com/box1bs/monocle/internal/model"
@@ -17,8 +16,6 @@ import (
 	"sync"
 	"time"
 )
-
-var urlRegex = regexp.MustCompile(`^https?://`)
 
 type indexer interface {
     HandleDocumentWords(*model.Document, []model.Passage) error
@@ -188,12 +185,12 @@ func (ws *WebScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
         }
 
         ws.pool.Submit(func() {
-			c, cancel := context.WithTimeout(ws.globalCtx, crawlTime)
-			defer cancel()
 			ws.rlMu.Lock()
 			if ws.rlMap[link.Link.Host] == nil {
 				ws.rlMap[link.Link.Host] = NewRateLimiter(DefaultDelay)
 			}
+			c, cancel := context.WithTimeout(ws.globalCtx, crawlTime)
+			defer cancel()
 			ws.rlMu.Unlock()
 			ws.ScrapeWithContext(c, link.Link, rls, depth+1)
 		})
@@ -211,6 +208,11 @@ func (ws *WebScraper) putDownLimiters() {
 func (ws *WebScraper) checkContext(ctx context.Context, currentURL string) bool {
 	select {
 		case <-ctx.Done():
+			select {
+			case <-ws.globalCtx.Done(): // чтоб не выводилась куча логов при остановке кровлинга
+				return true
+			default:
+			}
 			ws.log.Write(logger.NewMessage(logger.SCRAPER_LAYER, logger.ERROR, "context canceled while parsing page: %s\n", currentURL))
 			return true
 		default:

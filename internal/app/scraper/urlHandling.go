@@ -3,12 +3,20 @@ package scraper
 import (
 	"errors"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
+var urlRegex = regexp.MustCompile(`^https?://`)
+
 func makeAbsoluteURL(rawURL string, baseURL *url.URL) (string, error) {
+	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
 		return "", errors.New("empty url")
+	}
+
+	if strings.HasPrefix(rawURL, "#") || strings.HasPrefix(strings.ToLower(rawURL), "javascript:") {
+		return "", errors.New("ignored url type")
 	}
 
 	u, err := url.Parse(rawURL)
@@ -16,44 +24,37 @@ func makeAbsoluteURL(rawURL string, baseURL *url.URL) (string, error) {
 		return "", err
 	}
 
-	if u.IsAbs() {
-		return u.String(), nil
-	}
-
-	if u.Host == "" && !strings.HasPrefix(rawURL, "/") && !strings.HasPrefix(rawURL, "./") && !strings.HasPrefix(rawURL, "../") {
-		u2, err := url.Parse("https://" + rawURL)
-		if err == nil && u2.Host != "" {
-			return u2.String(), nil
-		}
-	}
-
-	if u.Host != "" && u.Scheme == "" {
-		u.Scheme = "https"
-		return u.String(), nil
-	}
-
 	resolved := baseURL.ResolveReference(u)
+	resolved.Fragment = ""
+	if resolved.Scheme != "https" {
+		return "", errors.New("invalid protocol scheme: " + resolved.Scheme)
+	}
 	return resolved.String(), nil
 }
 
 func normalizeUrl(rawUrl string) (string, error) {
-	uri := urlRegex.ReplaceAllString(strings.TrimSpace(rawUrl), "")
-
-	parsedUrl, err := url.Parse(uri)
+	p, err := url.Parse(rawUrl)
 	if err != nil {
 		return "", err
 	}
 
-	parsedUrl.Host = strings.TrimPrefix(parsedUrl.Host, "www.")
+	host := strings.TrimPrefix(strings.ToLower(p.Hostname()), "www.")
 
-	var normalized strings.Builder
-	normalized.WriteString(strings.ToLower(parsedUrl.Host))
-	path := strings.ToLower(strings.TrimSuffix(parsedUrl.Path, "/"))
-    if !strings.HasPrefix(path, "/") && path != "" {
-        normalized.WriteString("/" + path)
-    }
+	path := p.Path
+	if strings.Contains(path, "//") {
+		path = strings.ReplaceAll(path, "//", "/")
+	}
+	path = strings.TrimSuffix(path, "/")
 
-	return normalized.String(), nil
+	query := p.Query().Encode()
+	var sb strings.Builder
+	sb.WriteString(host)
+	sb.WriteString(path)
+	if query != "" {
+		sb.WriteString("?")
+		sb.WriteString(query)
+	}
+	return sb.String(), nil
 }
 
 func isSameOrigin(rawURL *url.URL, baseURL *url.URL) bool {

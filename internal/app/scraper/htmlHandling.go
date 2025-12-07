@@ -85,7 +85,7 @@ func (ws *WebScraper) parseHTMLStream(ctx context.Context, htmlContent string, b
 
 	for {
 		tokenCount++
-		if tokenCount%checkContextEvery == 0 {
+		if tokenCount % checkContextEvery == 0 {
 			select {
 			case <-ctx.Done():
 				if len(visit) != 0 {
