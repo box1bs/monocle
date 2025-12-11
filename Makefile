@@ -8,6 +8,9 @@ build:
 index: build
 	./bin/${BINARY_NAME}
 
+panic-test: build
+	./bin/${BINARY_NAME} > ./logs/panic.txt 2>&1
+
 index-gui: build
 	./bin/${BINARY_NAME} --gui
 

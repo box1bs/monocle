@@ -61,8 +61,8 @@ func (wp *WorkerPool) Submit(task func()) {
 	//wp.log.Write(logger.NewMessage(logger.WORKER_POOL_LAYER, logger.DEBUG, "Submitting task. Buffer: %d, Workers: %d", len(wp.buf), wp.workers))
 
 	wrap := func() {
+		defer wp.wg.Done()
 		task()
-		wp.wg.Done()
 	}
 
 	select{

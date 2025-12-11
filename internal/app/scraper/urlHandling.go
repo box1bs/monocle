@@ -3,11 +3,8 @@ package scraper
 import (
 	"errors"
 	"net/url"
-	"regexp"
 	"strings"
 )
-
-var urlRegex = regexp.MustCompile(`^https?://`)
 
 func makeAbsoluteURL(rawURL string, baseURL *url.URL) (string, error) {
 	rawURL = strings.TrimSpace(rawURL)

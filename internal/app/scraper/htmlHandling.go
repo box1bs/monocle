@@ -48,10 +48,6 @@ func (ws *WebScraper) fetchHTMLcontent(cur *url.URL, ctx context.Context, norm s
 	if len(links) != 0 {
 		ws.lru.Put(hashed, links)
 	}
-	
-	if crawled, err := ws.idx.IsCrawledContent(document.Id, passages); err != nil || crawled {
-		return nil, fmt.Errorf("already scraped")
-	}
 
 	fullText := strings.Builder{}
 	for _, passage := range passages {

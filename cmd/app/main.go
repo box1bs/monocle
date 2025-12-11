@@ -86,12 +86,11 @@ func main() {
 	}
 
 	defer vec.Close()
-	i, err := indexer.NewIndexer(ir, vec, log, cfg)
-	if err != nil {
-		panic(err)
-	}
+	i := indexer.NewIndexer(ir, vec, log, cfg)
 	if !*indexFlag {
-		i.Index(cfg, ctx)
+		if err := i.Index(cfg, ctx); err != nil {
+			panic(err)
+		}
 	}
 
 	count, err := ir.GetDocumentsCount()
@@ -161,13 +160,13 @@ func initGUI(cfg *configs.ConfigData, indexF bool) {
 		return
 	}
 	defer vec.Close()
-	i, err := indexer.NewIndexer(ir, vec, log, cfg)
-	if err != nil {
-		panic(err)
-	}
-
+	i := indexer.NewIndexer(ir, vec, log, cfg)
 	if !indexF {
-		go i.Index(cfg, ctx)
+		go func() {
+			if err := i.Index(cfg, ctx); err != nil {
+				panic(err)
+			}
+		}()
 	}
 
 	model := tui.InitModel(lc, cfg.TUIBorderColor, ir.GetDocumentsCount, searcher.NewSearcher(log, i, ir, vec).Search, c)

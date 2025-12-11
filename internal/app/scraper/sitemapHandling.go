@@ -20,20 +20,23 @@ const (
 	sitemap = "sitemap"
 )
 
-func (ws *WebScraper) fetchPageRulesAndOffers(ctx context.Context, cur *url.URL, rules *parser.RobotsTxt) ([]*linkToken, error) {
+func (ws *WebScraper) fetchPageRulesAndOffers(ctx context.Context, cur *url.URL) ([]*linkToken, *parser.RobotsTxt, error) {
+	robotsTXT := &parser.RobotsTxt{}
 	if r, err := parser.FetchRobotsTxt(ctx, cur.String(), ws.client); r != "" && err == nil {
-		robotsTXT := parser.ParseRobotsTxt(r)
-		rules = robotsTXT
+		*robotsTXT = *parser.ParseRobotsTxt(r)
 		ws.rlMu.Lock()
-		if lim := ws.rlMap[cur.Host]; (lim == nil || lim.R == DefaultDelay) && rules.Rules["*"].Delay > 0 {
-			ws.rlMap[cur.Host] = NewRateLimiter(rules.Rules["*"].Delay)
+		if lim := ws.rlMap[cur.Host]; (lim == nil || lim.R == DefaultDelay) && robotsTXT.Rules["*"].Delay > 0 {
+			ws.rlMap[cur.Host] = NewRateLimiter(robotsTXT.Rules["*"].Delay)
 		} else if lim == nil {
 			ws.rlMap[cur.Host] = NewRateLimiter(DefaultDelay)
 		}
 		ws.rlMu.Unlock()
+	} else {
+		robotsTXT = nil
 	}
 
-	return ws.prepareSitemapLinks(cur)
+	links, err := ws.prepareSitemapLinks(cur)
+	return links, robotsTXT, err
 }
 
 func (ws *WebScraper) haveSitemap(url *url.URL) ([]string, error) {

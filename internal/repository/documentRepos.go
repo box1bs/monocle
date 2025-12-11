@@ -2,7 +2,6 @@ package repository
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"slices"
@@ -16,7 +15,7 @@ const (
 	WordDocumentKeyFormat = "ri:%s_%x"
 )
 
-type payload struct {
+type docStForJson struct {
 	Id        []byte      `json:"id"`
 	URL       string      `json:"url"`
 	WordCount int         `json:"words_count"`
@@ -24,7 +23,7 @@ type payload struct {
 }
 
 func (ir *IndexRepository) documentToBytes(doc *model.Document) ([]byte, error) {
-	p := payload{
+	p := docStForJson{
 		Id:        doc.Id[:],
 		URL:       doc.URL,
 		WordCount: doc.WordCount,
@@ -34,7 +33,7 @@ func (ir *IndexRepository) documentToBytes(doc *model.Document) ([]byte, error) 
 }
 
 func (ir *IndexRepository) bytesToDocument(body []byte) (*model.Document, error) {
-	p := payload{}
+	p := docStForJson{}
 	
 	if err := json.Unmarshal(body, &p); err != nil {
 		return nil, err
@@ -162,49 +161,4 @@ func (ir *IndexRepository) GetDocumentsCount() (int, error) {
 	}
 
 	return count, nil
-}
-
-func (ir *IndexRepository) CheckContent(id [32]byte, hash [32]byte) (bool, *model.Document, error) {
-	ir.mu.Lock()
-	defer ir.mu.Unlock()
-	
-	key := fmt.Appendf(nil, "%s/%s", hash, id)
-	var (
-		err error
-		doc *model.Document
-	)
-	existError := "content already exists"
-
-	err = ir.DB.Update(func(txn *badger.Txn) error {
-		pref := fmt.Appendf(nil, "%s_", hash)
-
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		if it.Seek(pref); it.ValidForPrefix(pref) {
-			item := it.Item()
-			k := item.Key()
-			doc, err = ir.GetDocumentByID([32]byte(k[33:]))
-			if err != nil {
-				return err
-			}
-
-			return errors.New(existError)
-		}
-
-		if err := txn.Set(key, []byte{}); err != nil {
-			return err
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		if err.Error() == existError {
-			return true, doc, nil
-		}
-	}
-	return false, nil, err
 }

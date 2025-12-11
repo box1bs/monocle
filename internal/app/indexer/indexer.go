@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"context"
+	"math/rand"
 	"sync"
 
 	"github.com/box1bs/monocle/configs"
@@ -19,13 +20,15 @@ type repository interface {
 
 	LoadVisitedUrls(*sync.Map) error
 	SaveVisitedUrls(*sync.Map) error
-	
-	SavePageRank(map[string]float64) error
-	LoadPageRank() (map[string]float64, error)
 
 	IndexNGrams([]string, int) error
 	GetWordsByNGram(string, int) ([]string, error)
+	IndexDocShingles([128]uint64) error
+	GetSimilarSignatures([128]uint64) ([][128]uint64, error)
 	FlushAll()
+
+	SaveSaltArrays([128]uint64, [128]uint64) error
+	UploadSaltArrays() (*[128]uint64, *[128]uint64, error)
 
 	IndexDocumentWords([32]byte, map[string]int, map[string][]model.Position) error
 	GetDocumentsByWord(string) (map[[32]byte]model.WordCountAndPositions, error)
@@ -34,8 +37,6 @@ type repository interface {
 	GetDocumentByID([32]byte) (*model.Document, error)
 	GetAllDocuments() ([]*model.Document, error)
 	GetDocumentsCount() (int, error)
-
-	CheckContent([32]byte, [32]byte) (bool, *model.Document, error)
 }
 
 type indexer struct {
@@ -44,39 +45,37 @@ type indexer struct {
 	sc 			*spellChecker.SpellChecker
 	logger 		*logger.Logger
 	vectorizer 	*textHandling.Vectorizer
+	minHash 	*minHash
 	mu 			*sync.RWMutex
-	pageRank 	map[string]float64
 	repository 	repository
 }
 
-func NewIndexer(repo repository, vec *textHandling.Vectorizer, log *logger.Logger, config *configs.ConfigData) (*indexer, error) {
-	idx := &indexer{
+func NewIndexer(repo repository, vec *textHandling.Vectorizer, log *logger.Logger, config *configs.ConfigData) *indexer {
+	return &indexer{
 		vectorizer: vec,
 		stemmer:   	textHandling.NewEnglishStemmer(),
 		mu: 		new(sync.RWMutex),
 		repository: repo,
+		sc: 		spellChecker.NewSpellChecker(config.MaxTypo, config.NGramCount),
 		logger:    	log,
 	}
-	
-	idx.sc = spellChecker.NewSpellChecker(config.MaxTypo, config.NGramCount)
-
-	var err error
-	idx.pageRank, err = idx.repository.LoadPageRank()
-	if err != nil {
-		idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.CRITICAL_ERROR, "db error: %v", err))
-		return nil, err
-	}
-	return idx, nil
 }
 
 func (idx *indexer) Index(config *configs.ConfigData, global context.Context) error {
-	defer idx.repository.SavePageRank(idx.pageRank)
 	vis := &sync.Map{}
 	if err := idx.repository.LoadVisitedUrls(vis); err != nil {
 		return err
 	}
 	defer idx.repository.SaveVisitedUrls(vis)
 	defer idx.repository.FlushAll()
+	if a, b, err := idx.repository.UploadSaltArrays(); err != nil {
+		return err
+	} else if a == nil || b == nil {
+		idx.minHash = NewHasher(rand.New(rand.NewSource(1)), nil, nil)
+	} else {
+		idx.minHash = NewHasher(nil, a, b)
+	}
+	defer idx.repository.SaveSaltArrays(idx.minHash.a, idx.minHash.b)
 
 	idx.spider = scraper.NewScraper(vis, &scraper.ConfigData{
 		StartURLs:     	config.BaseURLs,

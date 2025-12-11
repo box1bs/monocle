@@ -19,7 +19,6 @@ import (
 
 type indexer interface {
     HandleDocumentWords(*model.Document, []model.Passage) error
-	IsCrawledContent([32]byte, []model.Passage) (bool, error)
 	SaveUrlsToBank([32]byte, []byte) error
 	GetUrlsByHash([32]byte) ([]byte, error)
 }
@@ -118,9 +117,12 @@ func (ws *WebScraper) ScrapeWithContext(ctx context.Context, currentURL *url.URL
 		return
     }
 	
-	links, err := ws.fetchPageRulesAndOffers(ctx, currentURL, rules)
+	links, rls, err := ws.fetchPageRulesAndOffers(ctx, currentURL)
 	if err.Error() == BaseXMLPageError || ws.checkContext(ctx, currentURL.String()) {
 		return
+	}
+	if rls != nil {
+		rules = rls
 	}
 	hashed := sha256.Sum256([]byte(normalized))
 	load := false

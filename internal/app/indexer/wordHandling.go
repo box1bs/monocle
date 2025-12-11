@@ -1,9 +1,8 @@
 package indexer
 
 import (
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
+	"sync"
 
 	"github.com/box1bs/monocle/internal/app/indexer/textHandling"
 	"github.com/box1bs/monocle/internal/model"
@@ -39,6 +38,19 @@ func (idx *indexer) HandleDocumentWords(doc *model.Document, passages []model.Pa
 		}
 	}
 	doc.WordCount = i
+
+	sign := idx.minHash.CreateSignature(allTokens)
+	conds, err := idx.repository.GetSimilarSignatures(sign)
+	if err != nil {
+		return err
+	}
+	if simRate := calcSim(sign, conds); simRate > 64 { // > 50% нграмм
+		idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.DEBUG, "finded %d/128 similar page", simRate))
+		return fmt.Errorf("page already indexed")
+	}
+	if err := idx.repository.IndexDocShingles(sign); err != nil {
+		return err
+	}
 
 	if err := idx.repository.SaveDocument(doc); err != nil {
 		idx.logger.Write(logger.NewMessage(logger.INDEX_LAYER, logger.CRITICAL_ERROR, "error saving document: %v", err))
@@ -102,33 +114,26 @@ func (idx *indexer) HandleTextQuery(text string) ([]string, []map[[32]byte]model
 	return stemmedTokens, reverthIndex, err
 }
 
-func (idx *indexer) IsCrawledContent(id [32]byte, content []model.Passage) (bool, error) {
-	c, err := json.Marshal(content)
-	if err != nil {
-		return false, err
+func calcSim(curSign [128]uint64, condidates [][128]uint64) int {
+	wg := &sync.WaitGroup{}
+	mu := &sync.Mutex{}
+	result := 0
+	l := len(condidates)
+	for i := range l {
+		wg.Add(1)
+		sum := 0
+		go func() {
+			defer wg.Done()
+			for j := range 128 {
+				if curSign[j] == condidates[i][j] {
+					sum++
+				}
+			}
+			mu.Lock()
+			result = max(result, sum)
+			mu.Unlock()
+		}()
 	}
-	hash := sha256.Sum256(c)
-
-	idx.mu.RLock()
-	crawled, doc, err := idx.repository.CheckContent(id, hash)
-	if err != nil && err.Error() != "content already exists" {
-		idx.mu.RUnlock()
-		return false, err
-	}
-	idx.mu.RUnlock()
-
-	if doc == nil {
-		return false, nil
-	}
-
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-	if crawled {
-		doc.Id = id
-		if err := idx.repository.SaveDocument(doc); err != nil {
-			return true, err
-		}
-	}
-
-	return crawled, err
+	wg.Wait()
+	return result
 }

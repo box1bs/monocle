@@ -15,12 +15,12 @@ import (
 )
 
 type IndexRepository struct {
-	DB 			*badger.DB
-	log 		*logger.Logger
-	wg 			*sync.WaitGroup
-	mu 			*sync.Mutex
-	wordBuffer	map[string][]string
-	counts		map[string]int
+	DB 				*badger.DB
+	log 			*logger.Logger
+	wg 				*sync.WaitGroup
+	mu 				*sync.Mutex
+	nGramIndexer	*wordChunkData
+	shingleIndexer	*shingleChunkData
 }
 
 func NewIndexRepository(path string, logger *logger.Logger) (*IndexRepository, error) {
@@ -28,14 +28,15 @@ func NewIndexRepository(path string, logger *logger.Logger) (*IndexRepository, e
 	if err != nil {
 		return nil, err
 	}
-	return &IndexRepository{
+	ir := &IndexRepository{
 		DB: db,
 		log: logger,
 		wg: new(sync.WaitGroup),
 		mu: new(sync.Mutex),
-		wordBuffer: make(map[string][]string),
-		counts: make(map[string]int),
-	}, nil
+		nGramIndexer: &wordChunkData{buffer: make(map[string][]string), counts: make(map[string]int)},
+		shingleIndexer: &shingleChunkData{buffer: make(map[[4]uint64][][128]uint64), counts: make(map[[4]uint64]int)},
+	}
+	return ir, ir.UpdateChunkingCounts() // сомнительно потому что нам не нужно это прокидывать если мы не будем индексировать
 }
 
 func (ir *IndexRepository) LoadVisitedUrls(visitedURLs *sync.Map) error {
@@ -73,32 +74,6 @@ func (ir *IndexRepository) SaveVisitedUrls(visitedURLs *sync.Map) error {
 		return true
 	})
 	return nil
-}
-
-func (ir *IndexRepository) SavePageRank(numOfUrlEntries map[string]float64) error {
-	return ir.DB.Update(func(txn *badger.Txn) error {
-		data, err := json.Marshal(numOfUrlEntries)
-		if err != nil {
-			return err
-		}
-		return txn.Set([]byte("pagerank:"), data)
-	})
-}
-
-func (ir *IndexRepository) LoadPageRank() (map[string]float64, error) {
-	out := map[string]float64{}
-	return out, ir.DB.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer it.Close()
-		if it.ValidForPrefix([]byte("pagerank:")) {
-			val, err := it.Item().ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-			return json.Unmarshal(val, &out)
-		}
-		return nil
-	})
 }
 
 func (ir *IndexRepository) IndexDocumentWords(docID [32]byte, sequence map[string]int, pos map[string][]model.Position) error {
